@@ -1,7 +1,7 @@
 CC ?= gcc
 OUT := libfbx
 SUFFIX := so
-CFLAGS := -O3 -ftree-vectorize -msse -mfpmath=sse -fPIC -g
+CFLAGS := -O3 -ftree-vectorize -msse -mfpmath=sse -fPIC -g -D UFBX_REAL_IS_FLOAT
 LDFLAGS := -l m
 
 ifeq ($(OS),Windows_NT)

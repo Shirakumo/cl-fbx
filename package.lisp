@@ -4,11 +4,10 @@
  Author: Nicolas Hafner <shinmera@tymoon.eu>
 |#
 
-(defpackage #:org.shirakumo.fraf.fbx.cffi
-  (:use #:cl)
-  (:shadow)
-  (:export
-   #:libfbx))
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (unless (find-package '#:org.shirakumo.fraf.fbx.cffi)
+    (make-package '#:org.shirakumo.fraf.fbx.cffi :use '(#:cl)))
+  (shadow '(cl:type cl:string cl:list cl:character cl:warning cl:stream cl:error) '#:org.shirakumo.fraf.fbx.cffi))
 
 (defpackage #:org.shirakumo.fraf.fbx
   (:use #:cl)
