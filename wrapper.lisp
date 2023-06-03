@@ -63,13 +63,55 @@
   (unless (eql :none (fbx:error-type error))
     (error 'fbx-error :handle error)))
 
-(defun set-string (target string)
+(defstruct transform
+  (translation #(0f0 0f0 0f0) :type (simple-array single-float (3)))
+  (rotation #(0f0 0f0 0f0 0f0) :type (simple-array single-float (3)))
+  (scale #(0f0 0f0 0f0) :type (simple-array single-float (3))))
+
+(defclass allocator ()
+  ((memory-limit :initarg :memory-limit :initform 0 :accessor memory-limit)
+   (allocation-limit :initarg :allocation-limit :initform 0 :accessor allocation-limit)
+   (huge-threshold :initarg :huge-threshold :initform 0 :accessor huge-threshold)
+   (max-chunk-size :initarg :max-chunk-size :initform 0 :accessor max-chunk-size)))
+
+(defgeneric free (allocator))
+(defgeneric allocate (allocator size))
+(defgeneric reallocate (allocator old-pointer old-size new-size))
+(defgeneric deallocate (allocator pointer size))
+
+(defmethod set-string (target (string string))
   (setf (fbx:string-length target) (length string))
   (setf (fbx:string-data target) target))
 
-(defun set-blob (target vector)
+(defmethod set-blob (target (vector vector))
   (setf (fbx:blob-size target) (length vector))
   (setf (fbx:blob-data target) (cffi:foreign-alloc :uint8 :count (length vector) :initial-contents vector)))
+
+(defmethod set-callback (target (function function))
+  (setf (fbx:progress-cb-fn target) (cffi:callback progress-cb))
+  (setf (fbx:progress-cb-user target) target)
+  (setf (global-pointer target) function))
+
+(defmethod set-coordinate-axes (target (axes cons))
+  (destructuring-bind (right up front) axes
+    (setf (fbx:coordinate-axes-right target) right)
+    (setf (fbx:coordinate-axes-up target) up)
+    (setf (fbx:coordinate-axes-front target) front)))
+
+(defmethod set-transform (target (transform transform))
+  (setf (fbx:transform-translation target) (transform-translation transform))
+  (setf (fbx:transform-rotation target) (transform-rotation transform))
+  (setf (fbx:transform-scale target) (transform-scale transform)))
+
+(defmethod set-allocator (target (allocator allocator))
+  (setf (fbx:allocator-alloc-fn target) (cffi:callback allocate-cb))
+  (setf (fbx:allocator-realloc-fn target) (cffi:callback reallocate-cb))
+  (setf (fbx:allocator-free-fn target) (cffi:callback free-cb))
+  (setf (fbx:allocator-free-allocator-fn target) (cffi:callback free-allocator-cb))
+  (setf (fbx:allocator-opts-memory-limit target) (memory-limit allocator))
+  (setf (fbx:allocator-opts-allocation-limit target) (allocation-limit allocator))
+  (setf (fbx:allocator-opts-huge-threshold target) (huge-threshold allocator))
+  (setf (fbx:allocator-opts-max-chunk-size target) (max-chunk-size allocator)))
 
 (defmacro from-args (args field &optional (setter 'setf))
   (let ((val (gensym "VAL")))
@@ -130,10 +172,10 @@
     (from-args args obj-mtl-data set-blob)
     (from-args args obj-mtl-path set-string)
     (from-args args obj-mtl-data set-blob)
-    (from-args args temp-allocator set-allocator-opts)
-    (from-args args result-allocator set-allocator-opts)
-    (from-args args progress-cb set-progress-cb)
-    (from-args args open-file-cb set-open-file-cb)
+    (from-args args temp-allocator set-allocator)
+    (from-args args result-allocator set-allocator)
+    (from-args args progress-cb set-callback)
+    (from-args args open-file-cb set-callback)
     (from-args args target-axes set-coordinate-axes)
     (from-args args target-camera-axes set-coordinate-axes)
     (from-args args target-light-axes set-coordinate-axes)
@@ -147,11 +189,14 @@
   (print-unreadable-object (file stream :type T)
     (format stream "~a" (source file))))
 
-(defmethod close ((file fbx-file) &key abort)
-  (declare (ignore abort))
+(defmethod free ((file fbx-file))
   (when (handle file)
     (fbx:free-scene (handle file))
     (setf (handle file) NIL)))
+
+(defmethod close ((file fbx-file) &key abort)
+  (declare (ignore abort))
+  (free file))
 
 (defun parse (source &rest args)
   (cffi:with-foreign-objects ((error '(:struct fbx:error))
@@ -239,3 +284,32 @@
 (cffi:defcallback stream-close-cb :void ((user :pointer))
   (with-ptr-resolve (file user)
     (close file)))
+
+(cffi:defcallback progress-cb fbx:progress-result ((user :pointer) (progress :pointer))
+  (with-ptr-resolve (fun user)
+    (funcall fun (fbx:progress-bytes-read progress) (fbx:progress-bytes-total progress))))
+
+(cffi:defcallback open-file-cb :bool ((user :pointer) (stream :pointer) (path :string) (length :size) (info :pointer))
+  (with-ptr-resolve (fun user)
+    (funcall fun stream path (fbx:open-file-info-type info)
+             (cffi:foreign-slot-pointer info '(:struct fbx:open-file-info) 'fbx:temp-allocator))))
+
+(cffi:defcallback close-memory-cb :void ((user :pointer) (data :pointer) (size :size))
+  (with-ptr-resolve (fun user)
+    (funcall fun data size)))
+
+(cffi:defcallback alloc-cb :pointer ((user :pointer) (size :size))
+  (with-ptr-resolve (allocator user)
+    (allocate allocator size)))
+
+(cffi:defcallback realloc-cb :pointer ((user :pointer) (old-ptr :pointer) (old-size :size) (new-size :size))
+  (with-ptr-resolve (allocator user)
+    (reallocate allocator old-ptr old-size new-size)))
+
+(cffi:defcallback free-cb :void ((user :pointer) (ptr :pointer) (size :size))
+  (with-ptr-resolve (allocator user)
+    (deallocate allocator ptr size)))
+
+(cffi:defcallback free-allocator-cb :void ((user :pointer))
+  (with-ptr-resolve (allocator user)
+    (free allocator)))
