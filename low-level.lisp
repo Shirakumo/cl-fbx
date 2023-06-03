@@ -1773,9 +1773,8 @@
   (opts :pointer)
   (error :pointer))
 
-(cffi:defcfun (load-file "ufbx_load_file_len") :pointer
-  (filename :pointer)
-  (filename-len :size)
+(cffi:defcfun (load-file "ufbx_load_file") :pointer
+  (filename :string)
   (opts :pointer)
   (error :pointer))
 

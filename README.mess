@@ -1,1 +1,8 @@
 ## AAAAA
+
+## Included Sources
+The following source files are included in this repository:
+
+- "ufbx.h"(https://github.com/ufbx/ufbx)
+- "ufbx.c"(https://github.com/ufbx/ufbx)
+- "glibc-2.13.h"(https://github.com/wheybags/glibc_version_header/blob/master/version_headers/x64/force_link_glibc_2.13.h)
