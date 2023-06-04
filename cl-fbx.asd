@@ -16,6 +16,7 @@
   :serial T
   :components ((:file "package")
                (:file "low-level")
+               (:file "conditions")
                (:file "structs")
                (:file "wrapper")
                (:file "documentation"))

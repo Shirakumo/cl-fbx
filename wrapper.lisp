@@ -33,36 +33,6 @@
                       `(cffi:foreign-slot-pointer ,',varg '(:struct ,',type) ',field))))
          ,@body))))
 
-(define-condition fbx-error (error)
-  ((handle :initarg :handle :reader handle))
-  (:report (lambda (c s) (format s "An FBX error occurred:~%~a"
-                                 (message error)))))
-
-(defmethod message ((error fbx-error))
-  (cffi:with-foreign-objects ((string :char 2048))
-    (fbx:format-error string 2048 (handle error))
-    (cffi:foreign-string-to-lisp string)))
-
-(defmethod code ((error fbx-error))
-  (fbx:error-type (handle error)))
-
-(defmethod description ((error fbx-error))
-  (fbx:description (handle error)))
-
-(defmethod info ((error fbx-error))
-  (cffi:foreign-string-to-lisp (cffi:foreign-slot-pointer (handle error) '(:struct fbx:error) 'fbx:info)
-                               :count (fbx:error-info-length (handle error))))
-
-(defmethod stack ((error fbx-error))
-  (loop for i from 0 below (fbx:error-stack-size (handle error))
-        for frame = (cffi:foreign-slot-pointer (handle error) '(:struct fbx:error) 'fbx:stack)
-        then (cffi:inc-pointer frame (cffi:foreign-type-size '(:struct fbx:error-frame)))
-        collect (list i (fbx:source-line frame) (fbx:function frame) (fbx:description frame))))
-
-(defun check-error (error)
-  (unless (eql :none (fbx:error-type error))
-    (error 'fbx-error :handle error)))
-
 (defmacro from-args (args field &optional (setter 'setf))
   (let ((val (gensym "VAL")))
     `(let ((,val (getf ,args ,(intern (string field) "KEYWORD") #1='#:no-value)))
