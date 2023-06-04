@@ -20,7 +20,7 @@
 
 (defun parse (source &rest args)
   (cffi:with-foreign-objects ((error '(:struct fbx:error)))
-    (let* ((opts (parse-options (make-instance 'load-opts) args))
+    (let* ((opts (apply #'make-instance 'load-opts args))
            (result (apply #'%parse source opts error args)))
       (check-error error)
       result)))
