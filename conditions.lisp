@@ -30,7 +30,10 @@
   (loop for i from 0 below (fbx:error-stack-size (handle error))
         for frame = (cffi:foreign-slot-pointer (handle error) '(:struct fbx:error) 'fbx:stack)
         then (cffi:inc-pointer frame (cffi:foreign-type-size '(:struct fbx:error-frame)))
-        collect (list i (fbx:source-line frame) (fbx:function frame) (fbx:description frame))))
+        collect (list i 
+                      (fbx:error-frame-source-line frame) 
+                      (fbx:error-frame-function frame)
+                      (fbx:error-frame-description frame))))
 
 (defun check-error (error)
   (unless (eql :none (fbx:error-type error))

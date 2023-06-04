@@ -56,7 +56,7 @@
                                       :deallocate-p deallocate))))
 
 (defclass fbx-file-stream (fbx-file)
-  ((stream :initarg :stream :accessor stream)
+  ((stream :initarg :stream :accessor %stream)
    (buffer :initarg :buffer :initform (make-array 4096 :element-type '(unsigned-byte 8)) :accessor buffer)
    (stream-struct :initarg :stream-struct :accessor stream-struct)))
 
@@ -64,8 +64,10 @@
   (when (stream-struct file)
     (setf (global-pointer (stream-struct file)) NIL)
     (cffi:foreign-free (stream-struct file))
-    (setf (stream-struct file) NIL)
-    (close (stream file))))
+    (setf (stream-struct file) NIL))
+  (when (%stream file)
+    (close (%stream file))
+    (setf (%stream file) NIL)))
 
 (defmethod %parse ((source stream) opts error &rest args &key prefix)
   (let ((stream (cffi:foreign-alloc '(:struct fbx:stream))))
@@ -81,23 +83,24 @@
 (cffi:defcallback stream-read-cb :size ((user :pointer) (data :pointer) (size :size))
   (with-ptr-resolve (file user)
     (let* ((buffer (buffer file))
-           (read (read-sequence buffer (stream file) :end (min size (length buffer)))))
+           (read (read-sequence buffer (%stream file) :end (min size (length buffer)))))
       (cffi:with-pointer-to-vector-data (ptr buffer)
         (static-vectors:replace-foreign-memory data ptr read))
       read)))
 
 (cffi:defcallback stream-skip-cb :bool ((user :pointer) (size :size))
   (with-ptr-resolve (file user)
-    (etypecase (stream file)
-      (file-stream
-       (file-position stream (+ (file-position stream) size)))
-      (stream
-       (let ((buffer (buffer file)))
-         (loop until (<= size 0)
-               for read = (read-sequence buffer (stream file) :end (min (length buffer) size))
-               do (decf size read))
-         T)))))
+    (let ((stream (%stream file)))
+      (etypecase stream
+        (file-stream
+         (file-position stream (+ (file-position stream) size)))
+        (stream
+         (let ((buffer (buffer file)))
+           (loop until (<= size 0)
+                 for read = (read-sequence buffer stream :end (min (length buffer) size))
+                 do (decf size read))
+           T))))))
 
 (cffi:defcallback stream-close-cb :void ((user :pointer))
   (with-ptr-resolve (file user)
-    (close file)))
+    (close (%stream file))))
