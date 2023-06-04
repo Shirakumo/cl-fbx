@@ -608,7 +608,7 @@
   (scale (:struct vec3)))
 
 (cffi:defcstruct (matrix :conc-name matrix- :class matrix)
-  (v :float :count 12))
+  (v (:array :float 12)))
 
 (cffi:defcstruct (dom-value :conc-name dom-value- :class dom-value)
   (type dom-value-type)

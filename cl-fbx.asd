@@ -16,10 +16,12 @@
   :serial T
   :components ((:file "package")
                (:file "low-level")
+               (:file "structs")
                (:file "wrapper")
                (:file "documentation"))
   :depends-on (:cffi
                :trivial-features
                :trivial-garbage
+               :trivial-extensible-sequences
                :static-vectors
                :documentation-utils))

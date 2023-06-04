@@ -12,7 +12,9 @@
 (defpackage #:org.shirakumo.fraf.fbx
   (:use #:cl)
   (:local-nicknames
-   (#:fbx #:org.shirakumo.fraf.fbx.cffi))
-  (:shadow)
+   (#:fbx #:org.shirakumo.fraf.fbx.cffi)
+   (#:sequences #:org.shirakumo.trivial-extensible-sequences))
+  (:shadow
+   #:values #:time #:character #:position)
   (:export
    #:fbx-error))
