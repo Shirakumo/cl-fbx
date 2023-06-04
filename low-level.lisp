@@ -2093,13 +2093,6 @@
   (v :pointer)
   (index :size))
 
-(cffi:defcfun (find-int "ufbx_ffi_find_int_len") :void
-  (retval :pointer)
-  (props :pointer)
-  (name :pointer)
-  (name_len :size)
-  (def :pointer))
-
 (cffi:defcfun (find-vec3 "ufbx_ffi_find_vec3_len") :void
   (retval :pointer)
   (props :pointer)
@@ -2108,6 +2101,13 @@
   (def :pointer))
 
 (cffi:defcfun (find-string "ufbx_ffi_find_string_len") :void
+  (retval :pointer)
+  (props :pointer)
+  (name :pointer)
+  (name_len :size)
+  (def :pointer))
+
+(cffi:defcfun (find-blob "ufbx_ffi_find_blob_len") :void
   (retval :pointer)
   (props :pointer)
   (name :pointer)

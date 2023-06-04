@@ -643,3 +643,39 @@
     (setf (fbx:allocator-opts-huge-threshold handle) (huge-threshold allocator))
     (setf (fbx:allocator-opts-max-chunk-size handle) (max-chunk-size allocator))
     allocator))
+
+(defmethod find ((name string) (props props) default)
+  (let ((handle (handle props)))
+    (cffi:with-foreign-string ((name length) name)
+      (etypecase default
+        (prop
+         (let ((ptr (fbx:find-prop handle name length)))
+           (if (cffi:null-pointer-p ptr)
+               default
+               (make-instance 'prop :handle ptr))))
+        (vec3
+         (cffi:with-foreign-objects ((ret '(:struct fbx:vec3)))
+           (fbx:find-vec3 (handle ret) props name length (handle default))
+           (let ((vec (make-array 3 :element-type 'single-float)))
+             (setf (aref vec 0) (fbx:vec3-x ret))
+             (setf (aref vec 1) (fbx:vec3-y ret))
+             (setf (aref vec 2) (fbx:vec3-z ret))
+             vec)))
+        (string
+         (cffi:with-foreign-objects ((str '(:struct fbx:string)))
+           (setf (fbx:string-data str) default)
+           (setf (fbx:string-length str) (length default))
+           (fbx:find-string str props name length str)
+           (fbx:string-data str)))
+        (blob
+         (cffi:with-foreign-objects ((ret '(:struct fbx:blob)))
+           (fbx:find-blob (handle ret) props name length (handle default))
+           (cffi:foreign-array-to-lisp (fbx:blob-data ret) (list :array :uint8 (fbx:blob-size ret)))))
+        (integer
+         (fbx:find-int handle name length default))
+        (single-float
+         (fbx:find-real handle name length default))
+        (boolean
+         (fbx:find-bool handle name length default))))))
+
+

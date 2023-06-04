@@ -15,6 +15,6 @@
    (#:fbx #:org.shirakumo.fraf.fbx.cffi)
    (#:sequences #:org.shirakumo.trivial-extensible-sequences))
   (:shadow
-   #:values #:time #:character #:position)
+   #:values #:time #:character #:position #:find)
   (:export
    #:fbx-error))
