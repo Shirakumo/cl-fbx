@@ -6,12 +6,86 @@
 
 (in-package #:org.shirakumo.fraf.fbx)
 
-(defclass foreign-vector (standard-object sequences:sequence)
-  ((handle :initarg :handle :initform NIL :accessor handle)
-   (element-type :initarg :element-type :initform NIL :accessor element-type)))
+(defstruct transform
+  (translation #(0f0 0f0 0f0) :type (simple-array single-float (3)))
+  (rotation #(0f0 0f0 0f0 0f0) :type (simple-array single-float (3)))
+  (scale #(0f0 0f0 0f0) :type (simple-array single-float (3))))
+
+(defclass allocator ()
+  ((memory-limit :initarg :memory-limit :initform 0 :accessor memory-limit)
+   (allocation-limit :initarg :allocation-limit :initform 0 :accessor allocation-limit)
+   (huge-threshold :initarg :huge-threshold :initform 0 :accessor huge-threshold)
+   (max-chunk-size :initarg :max-chunk-size :initform 0 :accessor max-chunk-size)))
+
+(defgeneric free (allocator))
+(defgeneric allocate (allocator size))
+(defgeneric reallocate (allocator old-pointer old-size new-size))
+(defgeneric deallocate (allocator pointer size))
+
+(defmethod set-string (target (string string))
+  (setf (fbx:string-length target) (length string))
+  (setf (fbx:string-data target) target))
+
+(defmethod set-blob (target (vector vector))
+  (setf (fbx:blob-size target) (length vector))
+  (setf (fbx:blob-data target) (cffi:foreign-alloc :uint8 :count (length vector) :initial-contents vector)))
+
+(defmethod set-callback (target (function function))
+  (setf (fbx:progress-cb-fn target) (cffi:callback progress-cb))
+  (setf (fbx:progress-cb-user target) target)
+  (setf (global-pointer target) function))
+
+(defmethod set-coordinate-axes (target (axes cons))
+  (destructuring-bind (right up front) axes
+    (setf (fbx:coordinate-axes-right target) right)
+    (setf (fbx:coordinate-axes-up target) up)
+    (setf (fbx:coordinate-axes-front target) front)))
+
+(defmethod set-transform (target (transform transform))
+  (setf (fbx:transform-translation target) (transform-translation transform))
+  (setf (fbx:transform-rotation target) (transform-rotation transform))
+  (setf (fbx:transform-scale target) (transform-scale transform)))
+
+(defmethod set-allocator (target (allocator allocator))
+  (setf (fbx:allocator-alloc-fn target) (cffi:callback allocate-cb))
+  (setf (fbx:allocator-realloc-fn target) (cffi:callback reallocate-cb))
+  (setf (fbx:allocator-free-fn target) (cffi:callback free-cb))
+  (setf (fbx:allocator-free-allocator-fn target) (cffi:callback free-allocator-cb))
+  (setf (fbx:allocator-opts-memory-limit target) (memory-limit allocator))
+  (setf (fbx:allocator-opts-allocation-limit target) (allocation-limit allocator))
+  (setf (fbx:allocator-opts-huge-threshold target) (huge-threshold allocator))
+  (setf (fbx:allocator-opts-max-chunk-size target) (max-chunk-size allocator)))
 
 (defclass wrapper ()
   ((handle :initarg :handle :initform NIL :accessor handle)))
+
+(defclass foreign-vector (standard-object sequences:sequence)
+  ((handle :initarg :handle :initform NIL :accessor handle)
+   (packed :initarg :packed :initform NIL :accessor packed)
+   (lisp-type :initarg :lisp-type :initform NIL :accessor lisp-type)
+   (foreign-type :initarg :foreign-type :initform NIL :accessor foreign-type)))
+
+(defmethod sequences:elt ((vector foreign-vector) index)
+  (let ((list (fbx:list-data (handle vector))))
+    (make-instance (lisp-type vector)
+                   :handle (if (packed vector)
+                               (cffi:mem-aptr list (foreign-type vector) index)
+                               (cffi:mem-aref list :pointer index)))))
+
+(defmethod (setf sequences:elt) ((value wrapper) (vector foreign-vector) index)
+  (unless (typep value (lisp-type vector))
+    (error 'type-error :datum value :expected-type (lisp-type vector)))
+  (let ((list (fbx:list-data (handle vector))))
+    (if (packed vector)
+        (static-vectors:replace-foreign-memory
+         (cffi:mem-aptr list (foreign-type vector) index)
+         (handle value)
+         (cffi:foreign-type-size (foreign-type vector)))
+        (setf (cffi:mem-aref list :pointer index) (handle value))))
+  value)
+
+(defmethod sequences:length ((vector foreign-vector))
+  (fbx:list-count (handle vector)))
 
 (defun compile-slot-accessor (type class slot-name slot-type slot-opts)
   (let ((accessor (or (getf slot-opts :accessor) (intern (string slot-name))))
@@ -34,9 +108,15 @@
     `(progn (defmethod ,accessor ((wrapper ,class))
               ,(cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
                       `(make-instance 'foreign-vector :handle (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)
-                                                      :element-type ,(or (getf slot-opts :element-type)
-                                                                         (progn (alexandria:simple-style-warning "No canonical element-type known for ~s" slot-name)
-                                                                                :pointer))))
+                                                      :lisp-type ,(or (getf slot-opts :lisp-type)
+                                                                      (when (getf slot-opts :foreign-type)
+                                                                        (intern (string (getf slot-opts :foreign-type))))
+                                                                      (progn (alexandria:simple-style-warning "No canonical element-type known for ~s" slot-name)
+                                                                             'wrapper))
+                                                      :foreign-type ,(or (getf slot-opts :foreign-type)
+                                                                         (when (getf slot-opts :lisp-type)
+                                                                           (intern (string (getf slot-opts :lisp-type)) (symbol-package type)))
+                                                                         :pointer)))
                      ((and (listp slot-type) (eql :struct (first slot-type)))
                       `(make-instance ',lisp-type :handle (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)))
                      ((and (eql :pointer slot-type) (not (eql T lisp-type)))

@@ -63,56 +63,6 @@
   (unless (eql :none (fbx:error-type error))
     (error 'fbx-error :handle error)))
 
-(defstruct transform
-  (translation #(0f0 0f0 0f0) :type (simple-array single-float (3)))
-  (rotation #(0f0 0f0 0f0 0f0) :type (simple-array single-float (3)))
-  (scale #(0f0 0f0 0f0) :type (simple-array single-float (3))))
-
-(defclass allocator ()
-  ((memory-limit :initarg :memory-limit :initform 0 :accessor memory-limit)
-   (allocation-limit :initarg :allocation-limit :initform 0 :accessor allocation-limit)
-   (huge-threshold :initarg :huge-threshold :initform 0 :accessor huge-threshold)
-   (max-chunk-size :initarg :max-chunk-size :initform 0 :accessor max-chunk-size)))
-
-(defgeneric free (allocator))
-(defgeneric allocate (allocator size))
-(defgeneric reallocate (allocator old-pointer old-size new-size))
-(defgeneric deallocate (allocator pointer size))
-
-(defmethod set-string (target (string string))
-  (setf (fbx:string-length target) (length string))
-  (setf (fbx:string-data target) target))
-
-(defmethod set-blob (target (vector vector))
-  (setf (fbx:blob-size target) (length vector))
-  (setf (fbx:blob-data target) (cffi:foreign-alloc :uint8 :count (length vector) :initial-contents vector)))
-
-(defmethod set-callback (target (function function))
-  (setf (fbx:progress-cb-fn target) (cffi:callback progress-cb))
-  (setf (fbx:progress-cb-user target) target)
-  (setf (global-pointer target) function))
-
-(defmethod set-coordinate-axes (target (axes cons))
-  (destructuring-bind (right up front) axes
-    (setf (fbx:coordinate-axes-right target) right)
-    (setf (fbx:coordinate-axes-up target) up)
-    (setf (fbx:coordinate-axes-front target) front)))
-
-(defmethod set-transform (target (transform transform))
-  (setf (fbx:transform-translation target) (transform-translation transform))
-  (setf (fbx:transform-rotation target) (transform-rotation transform))
-  (setf (fbx:transform-scale target) (transform-scale transform)))
-
-(defmethod set-allocator (target (allocator allocator))
-  (setf (fbx:allocator-alloc-fn target) (cffi:callback allocate-cb))
-  (setf (fbx:allocator-realloc-fn target) (cffi:callback reallocate-cb))
-  (setf (fbx:allocator-free-fn target) (cffi:callback free-cb))
-  (setf (fbx:allocator-free-allocator-fn target) (cffi:callback free-allocator-cb))
-  (setf (fbx:allocator-opts-memory-limit target) (memory-limit allocator))
-  (setf (fbx:allocator-opts-allocation-limit target) (allocation-limit allocator))
-  (setf (fbx:allocator-opts-huge-threshold target) (huge-threshold allocator))
-  (setf (fbx:allocator-opts-max-chunk-size target) (max-chunk-size allocator)))
-
 (defmacro from-args (args field &optional (setter 'setf))
   (let ((val (gensym "VAL")))
     `(let ((,val (getf ,args ,(intern (string field) "KEYWORD") #1='#:no-value)))
