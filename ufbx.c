@@ -27516,6 +27516,11 @@ ufbx_abi void ufbx_ffi_find_string_len(ufbx_string *retval, const ufbx_props *pr
 	*retval = ufbx_find_string_len(props, name, name_len, *def);
 }
 
+ufbx_abi void ufbx_ffi_find_blob_len(ufbx_blob *retval, const ufbx_props *props, const char *name, size_t name_len, const ufbx_blob *def)
+{
+	*retval = ufbx_find_blob_len(props, name, name_len, *def);
+}
+
 ufbx_abi void ufbx_ffi_find_anim_props(ufbx_anim_prop_list *retval, const ufbx_anim_layer *layer, const ufbx_element *element)
 {
 	*retval = ufbx_find_anim_props(layer, element);
