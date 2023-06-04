@@ -6,11 +6,6 @@
 
 (in-package #:org.shirakumo.fraf.fbx)
 
-(defstruct transform
-  (translation #(0f0 0f0 0f0) :type (simple-array single-float (3)))
-  (rotation #(0f0 0f0 0f0 0f0) :type (simple-array single-float (3)))
-  (scale #(0f0 0f0 0f0) :type (simple-array single-float (3))))
-
 (defclass allocator ()
   ((memory-limit :initarg :memory-limit :initform 0 :accessor memory-limit)
    (allocation-limit :initarg :allocation-limit :initform 0 :accessor allocation-limit)
@@ -41,11 +36,6 @@
     (setf (fbx:coordinate-axes-up target) up)
     (setf (fbx:coordinate-axes-front target) front)))
 
-(defmethod set-transform (target (transform transform))
-  (setf (fbx:transform-translation target) (transform-translation transform))
-  (setf (fbx:transform-rotation target) (transform-rotation transform))
-  (setf (fbx:transform-scale target) (transform-scale transform)))
-
 (defmethod set-allocator (target (allocator allocator))
   (setf (fbx:allocator-alloc-fn target) (cffi:callback allocate-cb))
   (setf (fbx:allocator-realloc-fn target) (cffi:callback reallocate-cb))
@@ -61,34 +51,60 @@
 
 (defclass foreign-vector (standard-object sequences:sequence)
   ((handle :initarg :handle :initform NIL :accessor handle)
-   (packed :initarg :packed :initform NIL :accessor packed)
    (lisp-type :initarg :lisp-type :initform NIL :accessor lisp-type)
    (foreign-type :initarg :foreign-type :initform NIL :accessor foreign-type)))
 
 (defmethod sequences:elt ((vector foreign-vector) index)
-  (let ((list (fbx:list-data (handle vector))))
-    (make-instance (lisp-type vector)
-                   :handle (if (packed vector)
-                               (cffi:mem-aptr list (foreign-type vector) index)
-                               (cffi:mem-aref list :pointer index)))))
+  (make-instance (lisp-type vector) :handle (cffi:mem-aref (fbx:list-data (handle vector)) :pointer index)))
 
 (defmethod (setf sequences:elt) ((value wrapper) (vector foreign-vector) index)
-  (unless (typep value (lisp-type vector))
-    (error 'type-error :datum value :expected-type (lisp-type vector)))
-  (let ((list (fbx:list-data (handle vector))))
-    (if (packed vector)
-        (static-vectors:replace-foreign-memory
-         (cffi:mem-aptr list (foreign-type vector) index)
-         (handle value)
-         (cffi:foreign-type-size (foreign-type vector)))
-        (setf (cffi:mem-aref list :pointer index) (handle value))))
+  (setf (cffi:mem-aref (fbx:list-data (handle vector)) :pointer index) (handle value))
   value)
 
 (defmethod sequences:length ((vector foreign-vector))
   (fbx:list-count (handle vector)))
 
+(defclass packed-foreign-vector (foreign-vector)
+  ())
+
+(defmethod sequences:elt ((vector packed-foreign-vector) index)
+  (make-instance (lisp-type vector) :handle (cffi:mem-aptr (fbx:list-data (handle vector)) (foreign-type vector) index)))
+
+(defmethod (setf sequences:elt) ((value wrapper) (vector packed-foreign-vector) index)
+  (static-vectors:replace-foreign-memory
+   (cffi:mem-aptr (fbx:list-data (handle vector)) (foreign-type vector) index)
+   (handle value)
+   (cffi:foreign-type-size (foreign-type vector)))
+  value)
+
+(defclass immediate-foreign-vector (foreign-vector)
+  ())
+
+(defmethod sequences:elt ((vector packed-foreign-vector) index)
+  (cffi:mem-aref (fbx:list-data (handle vector)) (foreign-type vector) index))
+
+(defmethod (setf sequences:elt) (value (vector packed-foreign-vector) index)
+  (setf (cffi:mem-aref (fbx:list-data (handle vector)) (foreign-type vector) index) value)
+  value)
+
+(defun make-foreign-vector (ptr lisp-type foreign-type)
+  (case foreign-type
+    ((:bool :double :float :char :pointer :size :int :int64 :uint64 :int32 :uint32 :int8 :uint8)
+     (make-instance 'immediate-foreign-vector :handle ptr :foreign-type foreign-type))
+    (T
+     (case lisp-type
+       ((vec2 vec3 vec4 fbx-string dom-value prop connection uv-set color-set edge face mesh-material
+              face-group subdivision-weight-range subdivision-weight line-segment lod-level skin-vertex
+              skin-weight blend-keyframe cache-frame cache-channel material-texture texture-layer
+              shader-texture-input texture-file shader-prop-binding anim-layer-desc prop-override
+              anim-prop keyframe constraint-target bone-pose name-element warning)
+        (make-instance 'foreign-vector :handle ptr :foreign-type foreign-type :lisp-type lisp-type))
+       (T
+        (make-instance 'foreign-vector :handle ptr :foreign-type foreign-type :lisp-type lisp-type))))))
+
 (defun compile-slot-accessor (type class slot-name slot-type slot-opts)
   (let ((accessor (or (getf slot-opts :accessor) (intern (string slot-name))))
+        (slot-fun (find-symbol (format NIL "~a-~a" type slot-name) (symbol-package type)))
         (lisp-type (cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
                           'foreign-vector)
                          ((and (listp slot-type) (eql :struct (first slot-type)))
@@ -97,7 +113,7 @@
                           'vector)
                          (T (case slot-type
                               (:pointer (or (getf slot-opts :lisp-type)
-                                            (progn (alexandria:simple-style-warning "No canonical type known for ~s" slot-name)
+                                            (progn (warn "~&; No canonical type known for ~a.~a" type slot-name)
                                                    T)))
                               (:float 'single-float)
                               (:double 'double-float)
@@ -107,22 +123,24 @@
                               (T T))))))
     `(progn (defmethod ,accessor ((wrapper ,class))
               ,(cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
-                      `(make-instance 'foreign-vector :handle (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)
-                                                      :lisp-type ,(or (getf slot-opts :lisp-type)
-                                                                      (when (getf slot-opts :foreign-type)
-                                                                        (intern (string (getf slot-opts :foreign-type))))
-                                                                      (progn (alexandria:simple-style-warning "No canonical element-type known for ~s" slot-name)
-                                                                             'wrapper))
-                                                      :foreign-type ,(or (getf slot-opts :foreign-type)
-                                                                         (when (getf slot-opts :lisp-type)
-                                                                           (intern (string (getf slot-opts :lisp-type)) (symbol-package type)))
-                                                                         :pointer)))
+                      `(make-foreign-vector (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)
+                                            ',(or (getf slot-opts :lisp-type)
+                                                  (when (getf slot-opts :foreign-type)
+                                                    (intern (string (getf slot-opts :foreign-type))))
+                                                  (progn (warn "~&; No canonical type known for ~a.~a" type slot-name)
+                                                         'wrapper))
+                                            ',(or (getf slot-opts :foreign-type)
+                                                  (when (getf slot-opts :lisp-type)
+                                                    (intern (string (getf slot-opts :lisp-type)) (symbol-package type)))
+                                                  :pointer)))
                      ((and (listp slot-type) (eql :struct (first slot-type)))
                       `(make-instance ',lisp-type :handle (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)))
                      ((and (eql :pointer slot-type) (not (eql T lisp-type)))
-                      `(make-instance ',lisp-type :handle (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)))
+                      `(let ((value (,slot-fun (handle wrapper))))
+                         (unless (cffi:null-pointer-p value)
+                           (make-instance ',lisp-type :handle value))))
                      (T
-                      `(,(find-symbol (format NIL "~a-~a" type slot-name) (symbol-package type)) (handle wrapper)))))
+                      `(,slot-fun (handle wrapper)))))
             
             (defmethod (setf ,accessor) ((value ,lisp-type) (wrapper ,class))
               ,(cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
@@ -133,198 +151,366 @@
                         (handle value)
                         ,(cffi:foreign-type-size slot-type)))
                      ((eql :pointer slot-type)
-                      `(setf (,(find-symbol (format NIL "~a-~a" type slot-name) (symbol-package type)) (handle wrapper)) (handle value)))
+                      `(setf (,slot-fun (handle wrapper)) (handle value)))
                      (T
-                      `(setf (,(find-symbol (format NIL "~a-~a" type slot-name) (symbol-package type)) (handle wrapper)) value)))
-              value))))
+                      `(setf (,slot-fun (handle wrapper)) value)))
+              value)
 
-(defmacro define-struct-wrapper (type &body slot-options)
+            ,@(when (eql :pointer slot-type)
+                `((defmethod (setf ,accessor) ((value null) (wrapper ,class))
+                    (setf (,slot-fun (handle wrapper)) (cffi:null-pointer))
+                    value))))))
+
+(defmacro define-struct-accessors (type class &body slot-options)
   (let ((slots (cffi:foreign-slot-names `(:struct ,type))))
-    (destructuring-bind (type &optional (class (intern (string type)))) (if (listp type) type (list type))
-      `(progn 
-         (defclass ,class (wrapper) ())
-         
-         ,@(loop for slot-name in slots
-                 for slot-type = (cffi:foreign-slot-type `(:struct ,type) slot-name)
-                 for slot-opts = (rest (assoc slot-name slot-options :test #'string=))
-                 collect (compile-slot-accessor type class slot-name slot-type slot-opts))))))
+    `(progn 
+       ,@(loop for slot-name in slots
+               for slot-type = (cffi:foreign-slot-type `(:struct ,type) slot-name)
+               for slot-opts = (rest (assoc slot-name slot-options :test #'string=))
+               unless (getf slot-opts :omit)
+               collect (compile-slot-accessor type class slot-name slot-type slot-opts)))))
 
-(define-struct-wrapper fbx:string)
-(define-struct-wrapper fbx:blob)
-(define-struct-wrapper fbx:vec2)
-(define-struct-wrapper fbx:vec3)
-(define-struct-wrapper fbx:vec4)
-(define-struct-wrapper fbx:quat)
-;(define-struct-wrapper fbx:transform)
-(define-struct-wrapper fbx:matrix)
-(define-struct-wrapper fbx:dom-value
-  (type :accessor value-type))
-;(define-struct-wrapper fbx:list)
-(define-struct-wrapper fbx:dom-node)
-(define-struct-wrapper fbx:prop
-  (type :accessor prop-type))
-(define-struct-wrapper fbx:props)
-(define-struct-wrapper fbx:connection)
-(define-struct-wrapper fbx:element
-  (type :accessor element-type)
-  (dom-node :lisp-type dom-node)
-  (scene :lisp-type scene))
-(define-struct-wrapper fbx:unknown
-  (type :accessor unknown-type :lisp-type fbx-string))
-(define-struct-wrapper fbx:node)
-(define-struct-wrapper fbx:vertex-attrib)
-(define-struct-wrapper fbx:vertex-real)
-(define-struct-wrapper fbx:vertex-vec2)
-(define-struct-wrapper fbx:vertex-vec3)
-(define-struct-wrapper fbx:vertex-vec4)
-(define-struct-wrapper fbx:uv-set)
-(define-struct-wrapper fbx:color-set)
-(define-struct-wrapper fbx:edge)
-(define-struct-wrapper fbx:face)
-(define-struct-wrapper fbx:mesh-material
-  (material :lisp-type material))
-(define-struct-wrapper fbx:face-group)
-(define-struct-wrapper fbx:subdivision-weight-range)
-(define-struct-wrapper fbx:subdivision-weight)
-(define-struct-wrapper fbx:subdivision-result)
-(define-struct-wrapper fbx:mesh
-  (subdivision-result :lisp-type subdivision-result))
-(define-struct-wrapper fbx:light
-  (type :accessor light-type))
-(define-struct-wrapper fbx:coordinate-axes)
-(define-struct-wrapper fbx:camera)
-(define-struct-wrapper fbx:bone)
-(define-struct-wrapper fbx:empty)
-(define-struct-wrapper fbx:line-segment)
-(define-struct-wrapper fbx:line-curve)
-(define-struct-wrapper fbx:nurbs-basis)
-(define-struct-wrapper fbx:nurbs-curve)
-(define-struct-wrapper fbx:nurbs-surface
-  (material :lisp-type material))
-(define-struct-wrapper fbx:nurbs-trim-surface)
-(define-struct-wrapper fbx:nurbs-trim-boundary)
-(define-struct-wrapper fbx:procedural-geometry)
-(define-struct-wrapper fbx:stereo-camera
-  (left :lisp-type camera)
-  (right :lisp-type camera))
-(define-struct-wrapper fbx:camera-switcher)
-(define-struct-wrapper fbx:marker
-  (type :accessor marker-type))
-(define-struct-wrapper fbx:lod-level)
-(define-struct-wrapper fbx:lod-group)
-(define-struct-wrapper fbx:skin-vertex)
-(define-struct-wrapper fbx:skin-weight)
-(define-struct-wrapper fbx:skin-deformer)
-(define-struct-wrapper fbx:skin-cluster
-  (bone-node :lisp-type node))
-(define-struct-wrapper fbx:blend-deformer)
-(define-struct-wrapper fbx:blend-keyframe
-  (shape :lisp-type blend-shape))
-(define-struct-wrapper fbx:blend-channel)
-(define-struct-wrapper fbx:blend-shape)
-(define-struct-wrapper fbx:cache-frame)
-(define-struct-wrapper fbx:cache-channel)
-(define-struct-wrapper fbx:geometry-cache)
-(define-struct-wrapper fbx:cache-deformer
-  (file :lisp-type cache-file)
-  (external-cache :lisp-type geometry-cache)
-  (external-channel :lisp-type cache-channel))
-(define-struct-wrapper fbx:cache-file
-  (format :accessor file-format)
-  (external-cache :lisp-type geometry-cache))
-(define-struct-wrapper fbx:material-map
-  (texture :lisp-type texture))
-(define-struct-wrapper fbx:material-feature-info)
-(define-struct-wrapper fbx:material-texture
-  (texture :lisp-type texture))
-(define-struct-wrapper fbx:material-fbx-maps)
-(define-struct-wrapper fbx:material-pbr-maps)
-(define-struct-wrapper fbx:material-features)
-(define-struct-wrapper fbx:material
-  (shader :lisp-type shader))
-(define-struct-wrapper fbx:texture-layer
-  (texture :lisp-type texture))
-(define-struct-wrapper fbx:shader-texture-input
-  (texture :lisp-type texture)
-  (prop :lisp-type prop)
-  (texture-prop :lisp-type prop)
-  (texture-enabled-prop :lisp-type prop))
-(define-struct-wrapper fbx:shader-texture
-  (type :accessor shader-texture-type)
-  (main-texture :lisp-type texture))
-(define-struct-wrapper fbx:texture-file)
-(define-struct-wrapper fbx:texture
-  (type :accessor texture-type)
-  (video :lisp-type video)
-  (shader :lisp-type shader-texture))
-(define-struct-wrapper fbx:video)
-(define-struct-wrapper fbx:shader
-  (type :accessor shader-type))
-(define-struct-wrapper fbx:shader-prop-binding)
-(define-struct-wrapper fbx:shader-binding)
-(define-struct-wrapper fbx:anim-layer-desc
-  (layer :lisp-type anim-layer))
-(define-struct-wrapper fbx:prop-override)
-(define-struct-wrapper fbx:anim)
-(define-struct-wrapper fbx:anim-stack)
-(define-struct-wrapper fbx:anim-prop
-  (anim-value :lisp-type anim-value))
-(define-struct-wrapper fbx:anim-layer)
-(define-struct-wrapper fbx:anim-value
-  (curves :lisp-type anim-curve))
-(define-struct-wrapper fbx:tangent)
-(define-struct-wrapper fbx:keyframe)
-(define-struct-wrapper fbx:anim-curve)
-(define-struct-wrapper fbx:display-layer)
-(define-struct-wrapper fbx:selection-set)
-(define-struct-wrapper fbx:selection-node
-  (target-node :lisp-type node)
-  (target-mesh :lisp-type mesh))
-(define-struct-wrapper fbx:character)
-(define-struct-wrapper fbx:constraint-target
-  (node :lisp-type node))
-(define-struct-wrapper fbx:constraint
-  (type :accessor constraint-type)
-  (node :lisp-type node)
-  (aim-up-node :lisp-type node)
-  (ik-effector :lisp-type node)
-  (ik-end-node :lisp-type node))
-(define-struct-wrapper fbx:bone-pose
-  (bone-node :lisp-type node))
-(define-struct-wrapper fbx:pose)
-(define-struct-wrapper fbx:metadata-object)
-(define-struct-wrapper fbx:name-element
-  (type :accessor element-type))
-(define-struct-wrapper fbx:application)
-;(define-struct-wrapper fbx:warning)
-(define-struct-wrapper fbx:metadata)
-(define-struct-wrapper fbx:scene-settings)
-(define-struct-wrapper fbx:scene
-  (root-node :lisp-type node)
-  (dom-root :lisp-type node))
-(define-struct-wrapper fbx:curve-point)
-(define-struct-wrapper fbx:surface-point)
-(define-struct-wrapper fbx:topo-edge)
-(define-struct-wrapper fbx:vertex-stream)
-;(define-struct-wrapper fbx:allocator)
-;(define-struct-wrapper fbx:allocator-opts)
-;(define-struct-wrapper fbx:stream)
-;(define-struct-wrapper fbx:open-file-info)
-;(define-struct-wrapper fbx:open-file-cb)
-;(define-struct-wrapper fbx:close-memory-cb)
-;(define-struct-wrapper fbx:open-memory-opts)
-;(define-struct-wrapper fbx:error-frame)
-;(define-struct-wrapper fbx:error)
-;(define-struct-wrapper fbx:progress)
-;(define-struct-wrapper fbx:progress-cb)
-(define-struct-wrapper fbx:inflate-input)
-(define-struct-wrapper fbx:inflate-retain)
-;(define-struct-wrapper fbx:load-opts)
-;(define-struct-wrapper fbx:evaluate-opts)
-;(define-struct-wrapper fbx:tessellate-curve-opts)
-;(define-struct-wrapper fbx:tessellate-surface-opts)
-;(define-struct-wrapper fbx:subdivide-opts)
-;(define-struct-wrapper fbx:geometry-cache-opts)
-;(define-struct-wrapper fbx:geometry-cache-data-opts)
-;(define-struct-wrapper fbx:panic)
+(defmacro define-struct-wrappers (&body structs)
+  (let ((structs (loop for (type . rest) in structs
+                       collect (destructuring-bind (type &optional (class (intern (string type)))) (if (listp type) type (list type))
+                                 (list* type class rest)))))
+    `(progn
+       ,@(loop for (type class) in structs
+               collect `(defclass ,class (wrapper) ()))
+       ,@(loop for (type class . slots) in structs
+               collect `(define-struct-accessors ,type ,class ,@slots)))))
 
+(define-struct-wrappers
+  ((fbx:string fbx-string)
+   (length :accessor size))
+  (fbx:blob
+   (data :lisp-type T))
+  (fbx:vec2)
+  (fbx:vec3)
+  (fbx:vec4)
+  (fbx:quat)
+  (fbx:transform)
+  (fbx:matrix)
+  (fbx:dom-value
+   (type :accessor value-type))
+  ;;(fbx:list)
+  (fbx:dom-node
+   (children :lisp-type dom-node)
+   (values :lisp-type dom-value))
+  (fbx:prop
+   (type :accessor prop-type))
+  (fbx:props
+   (props :lisp-type prop)
+   (defaults :lisp-type props))
+  (fbx:element
+   (type :accessor element-type)
+   (dom-node :lisp-type dom-node)
+   (scene :lisp-type scene)
+   (instances :lisp-type node)
+   (connections-src :lisp-type connection)
+   (connections-dst :lisp-type connection))
+  (fbx:connection
+   (src :lisp-type element)
+   (dst :lisp-type element))
+  (fbx:unknown
+   (type :accessor unknown-type :lisp-type fbx-string))
+  (fbx:node
+   (parent :lisp-type node)
+   (children :lisp-type node)
+   (mesh :lisp-type mesh)
+   (light :lisp-type light)
+   (camera :lisp-type camera)
+   (bone :lisp-type bone)
+   (attrib :lisp-type element)
+   (geometry-transform-helper :lisp-type node)
+   (all-attribs :lisp-type element)
+   (materials :lisp-type material))
+  (fbx:vertex-attrib
+   (values :lisp-type T)
+   (indices :foreign-type :uint32))
+  (fbx:vertex-real
+   (values :lisp-type single-float :foreign-type :float)
+   (indices :foreign-type :uint32))
+  (fbx:vertex-vec2
+   (values :lisp-type vec2)
+   (indices :foreign-type :uint32))
+  (fbx:vertex-vec3
+   (values :lisp-type vec3)
+   (indices :foreign-type :uint32))
+  (fbx:vertex-vec4
+   (values :lisp-type vec4)
+   (indices :foreign-type :uint32))
+  (fbx:uv-set)
+  (fbx:color-set)
+  (fbx:edge)
+  (fbx:face)
+  (fbx:mesh-material
+   (material :lisp-type material)
+   (face-indices :foreign-type :uint32))
+  (fbx:face-group
+   (face-indices :foreign-type :uint32))
+  (fbx:subdivision-weight-range)
+  (fbx:subdivision-weight)
+  (fbx:subdivision-result
+   (source-vertex-ranges :lisp-type subdivision-weight-range)
+   (source-vertex-weights :lisp-type subdivision-weight)
+   (skin-cluster-ranges :lisp-type subdivision-weight-range)
+   (skin-cluster-weights :lisp-type subdivision-weight))
+  (fbx:mesh
+   (subdivision-result :lisp-type subdivision-result)
+   (faces :lisp-type face)
+   (face-smoothing :foreign-type :bool)
+   (face-material :foreign-type :uint32)
+   (face-group :foreign-type :uint32)
+   (face-hole :foreign-type :bool)
+   (edges :lisp-type edge)
+   (edge-smoothing :foreign-type :bool)
+   (edge-crease :foreign-type :float)
+   (edge-visibility :foreign-type :bool)
+   (vertex-indices :foreign-type :uint32)
+   (vertices :lisp-type vec3)
+   (vertex-first-index :foreign-type :uint32)
+   (uv-sets :lisp-type uv-set)
+   (color-sets :lisp-type color-set)
+   (materials :lisp-type material)
+   (face-groups :lisp-type face-group)
+   (skin-deformers :lisp-type skin-deformer)
+   (blend-deformers :lisp-type blend-deformer)
+   (cache-deformers :lisp-type cache-deformer)
+   (all-deformers :lisp-type element))
+  (fbx:light
+   (type :accessor light-type))
+  (fbx:coordinate-axes)
+  (fbx:camera)
+  (fbx:bone)
+  (fbx:empty)
+  (fbx:line-segment)
+  (fbx:line-curve
+   (control-points :lisp-type vec3)
+   (point-indices :foreign-type :uint32)
+   (segments :lisp-type line-segment))
+  (fbx:nurbs-basis
+   (knot-vector :foreign-type :float)
+   (spans :foreign-type :float))
+  (fbx:nurbs-curve
+   (control-points :lisp-type vec4))
+  (fbx:nurbs-surface
+   (material :lisp-type material)
+   (control-points :lisp-type vec4))
+  (fbx:nurbs-trim-surface)
+  (fbx:nurbs-trim-boundary)
+  (fbx:procedural-geometry)
+  (fbx:stereo-camera
+   (left :lisp-type camera)
+   (right :lisp-type camera))
+  (fbx:camera-switcher)
+  (fbx:marker
+   (type :accessor marker-type))
+  (fbx:lod-level)
+  (fbx:lod-group
+   (lod-levels :lisp-type lod-level))
+  (fbx:skin-vertex)
+  (fbx:skin-weight)
+  (fbx:skin-deformer
+   (clusters :lisp-type skin-cluster)
+   (vertices :lisp-type skin-vertex)
+   (weights :lisp-type skin-weight)
+   (dq-vertices :foreign-type :uint32)
+   (dq-weights :foreign-type :float))
+  (fbx:skin-cluster
+   (bone-node :lisp-type node)
+   (vertices :foreign-type :uint32)
+   (weights :foreign-type :float))
+  (fbx:blend-deformer
+   (channels :lisp-type blend-channel))
+  (fbx:blend-keyframe
+   (shape :lisp-type blend-shape))
+  (fbx:blend-channel
+   (keyframes :lisp-type blend-keyframe))
+  (fbx:blend-shape
+   (offset-vertices :foreign-type :uint32)
+   (position-offsets :lisp-type vec3)
+   (normal-offsets :lisp-type vec3))
+  (fbx:cache-frame)
+  (fbx:cache-channel
+   (frames :lisp-type cache-frame))
+  (fbx:geometry-cache
+   (channels :lisp-type cache-channel)
+   (frames :lisp-type cache-frame)
+   (extra-info :lisp-type fbx-string))
+  (fbx:cache-deformer
+   (file :lisp-type cache-file)
+   (external-cache :lisp-type geometry-cache)
+   (external-channel :lisp-type cache-channel))
+  (fbx:cache-file
+   (format :accessor file-format)
+   (external-cache :lisp-type geometry-cache))
+  (fbx:material-map
+   (texture :lisp-type texture))
+  (fbx:material-feature-info)
+  (fbx:material-texture
+   (texture :lisp-type texture))
+  (fbx:material-fbx-maps)
+  (fbx:material-pbr-maps)
+  (fbx:material-features)
+  (fbx:material
+   (shader :lisp-type shader)
+   (textures :lisp-type material-texture))
+  (fbx:texture-layer
+   (texture :lisp-type texture))
+  (fbx:shader-texture-input
+   (texture :lisp-type texture)
+   (prop :lisp-type prop)
+   (texture-prop :lisp-type prop)
+   (texture-enabled-prop :lisp-type prop))
+  (fbx:shader-texture
+   (type :accessor shader-texture-type)
+   (inputs :lisp-type shader-texture-input)
+   (main-texture :lisp-type texture))
+  (fbx:texture-file)
+  (fbx:texture
+   (type :accessor texture-type)
+   (video :lisp-type video)
+   (shader :lisp-type shader-texture)
+   (layers :lisp-type texture-layer)
+   (file-textures :lisp-type texture))
+  (fbx:video)
+  (fbx:shader
+   (type :accessor shader-type)
+   (bindings :lisp-type shader-binding))
+  (fbx:shader-prop-binding)
+  (fbx:shader-binding
+   (prop-bindings :lisp-type shader-prop-binding))
+  (fbx:anim-layer-desc
+   (layer :lisp-type anim-layer))
+  (fbx:prop-override)
+  (fbx:anim
+   (layers :lisp-type anim-layer-desc)
+   (prop-overrides :lisp-type prop-override))
+  (fbx:anim-stack
+   (layers :lisp-type anim-layer))
+  (fbx:anim-prop
+   (anim-value :lisp-type anim-value)
+   (element :lisp-type element))
+  (fbx:anim-layer
+   (anim-values :lisp-type anim-value)
+   (anim-props :lisp-type anim-prop))
+  (fbx:anim-value
+   (curves :lisp-type anim-curve))
+  (fbx:tangent)
+  (fbx:keyframe)
+  (fbx:anim-curve
+   (keyframes :lisp-type keyframe))
+  (fbx:display-layer
+   (nodes :lisp-type node))
+  (fbx:selection-set
+   (nodes :lisp-type node))
+  (fbx:selection-node
+   (target-node :lisp-type node)
+   (target-mesh :lisp-type mesh)
+   (vertices :foreign-type :uint32)
+   (edges :foreign-type :uint32)
+   (faces :foreign-type :uint32))
+  (fbx:character)
+  (fbx:constraint-target
+   (node :lisp-type node))
+  (fbx:constraint
+   (type :accessor constraint-type)
+   (node :lisp-type node)
+   (aim-up-node :lisp-type node)
+   (ik-effector :lisp-type node)
+   (ik-end-node :lisp-type node)
+   (targets :lisp-type constraint-target))
+  (fbx:bone-pose
+   (bone-node :lisp-type node))
+  (fbx:pose
+   (bone-poses :lisp-type bone-pose))
+  (fbx:metadata-object)
+  (fbx:name-element
+   (type :accessor element-type)
+   (element :lisp-type element))
+  (fbx:application)
+  ;;(fbx:warning)
+  (fbx:metadata
+   (warnings :lisp-type fbx-warning))
+  (fbx:scene-settings)
+  (fbx:scene
+   (root-node :lisp-type node)
+   (dom-root :lisp-type node)
+   (unknowns :lisp-type unknown)
+   (nodes :lisp-type node)
+   (meshes :lisp-type mesh)
+   (lights :lisp-type light)
+   (cameras :lisp-type camera)
+   (bones :lisp-type bone)
+   (empties :lisp-type empty)
+   (line-curves :lisp-type line-curve)
+   (nurbs-curves :lisp-type nurbs-curve)
+   (nurbs-surfaces :lisp-type nurbs-surface)
+   (nurbs-trim-surfaces :lisp-type nurbs-trim-surface)
+   (nurbs-trim-boundaries :lisp-type nurbs-trim-boundary)
+   (procedural-geometries :lisp-type procedural-geometry)
+   (stereo-cameras :lisp-type stereo-camera)
+   (camera-switchers :lisp-type camera-switcher)
+   (markers :lisp-type marker)
+   (lod-groups :lisp-type lod-group)
+   (skin-deformers :lisp-type skin-deformer)
+   (skin-clusters :lisp-type skin-cluster)
+   (blend-deformers :lisp-type blend-deformer)
+   (blend-channels :lisp-type blend-channel)
+   (blend-shapes :lisp-type blend-shape)
+   (cache-deformers :lisp-type cache-deformer)
+   (cache-files :lisp-type cache-file)
+   (materials :lisp-type material)
+   (textures :lisp-type texture)
+   (videos :lisp-type video)
+   (shaders :lisp-type shader)
+   (shader-bindings :lisp-type shader-binding)
+   (anim-stacks :lisp-type anim-stack)
+   (anim-layers :lisp-type anim-layer)
+   (anim-values :lisp-type anim-value)
+   (anim-curves :lisp-type anim-curve)
+   (display-layers :lisp-type display-layer)
+   (selection-sets :lisp-type selection-set)
+   (selection-nodes :lisp-type selection-node)
+   (characters :lisp-type character)
+   (constraints :lisp-type constraint)
+   (poses :lisp-type pose)
+   (metadata-objects :lisp-type metadata-object)
+   (texture-files :lisp-type texture-file)
+   (elements :lisp-type element)
+   (connections-src :lisp-type connection)
+   (connections-dst :lisp-type connection)
+   (elements-by-name :lisp-type name-element))
+  (fbx:curve-point)
+  (fbx:surface-point)
+  (fbx:topo-edge)
+  (fbx:vertex-stream
+   (data :lisp-type T))
+  ;;(fbx:allocator)
+  ;;(fbx:allocator-opts)
+  ;;(fbx:stream)
+  ;;(fbx:open-file-info)
+  ;;(fbx:open-file-cb)
+  ;;(fbx:close-memory-cb)
+  ;;(fbx:open-memory-opts)
+  ;;(fbx:error-frame)
+  ;;(fbx:error)
+  ;;(fbx:progress)
+  ;;(fbx:progress-cb)
+  (fbx:inflate-input
+   (progress-cb :omit T)
+   (data :lisp-type T)
+   (buffer :lisp-type T)
+   (read-fn :lisp-type T)
+   (read-user :lisp-type T))
+  (fbx:inflate-retain)
+  ;;(fbx:load-opts)
+  ;;(fbx:evaluate-opts)
+  ;;(fbx:tessellate-curve-opts)
+  ;;(fbx:tessellate-surface-opts)
+  ;;(fbx:subdivide-opts)
+  ;;(fbx:geometry-cache-opts)
+  ;;(fbx:geometry-cache-data-opts)
+  ;;(fbx:panic)
+  )

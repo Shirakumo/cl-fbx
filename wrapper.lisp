@@ -131,7 +131,7 @@
     (from-args args target-light-axes set-coordinate-axes)
     (from-args args root-transform set-transform)))
 
-(defclass fbx-file ()
+(defclass fbx-file (scene)
   ((handle :initarg :handle :initform NIL :accessor handle)
    (source :initarg :source :initform NIL :accessor source)))
 
