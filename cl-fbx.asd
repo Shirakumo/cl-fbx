@@ -17,8 +17,8 @@
   :components ((:file "package")
                (:file "low-level")
                (:file "conditions")
-               (:file "structs")
                (:file "wrapper")
+               (:file "file")
                (:file "documentation"))
   :depends-on (:cffi
                :trivial-features
