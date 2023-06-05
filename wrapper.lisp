@@ -124,6 +124,15 @@
     (setf (fbx:list-count (handle vector)) 0)
     (setf (handle vector) NIL)))
 
+(defmethod describe-object ((vector foreign-vector) stream)
+  (format stream "~a~%  [~a]~%~%" vector (type-of vector))
+  (format stream "FOREIGN-TYPE = ~s~%" (foreign-type vector))
+  (format stream "LISP-TYPE    = ~s~%" (lisp-type vector))
+  (format stream "LENGTH       = ~s~%" (length vector))
+  (terpri stream)
+  (dotimes (i (length vector))
+    (format stream "[~4d] ~s~%" i (elt vector i))))
+
 (defclass packed-foreign-vector (foreign-vector)
   ())
 
