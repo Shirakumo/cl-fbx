@@ -36,6 +36,8 @@
        #:code)
       ;; file.lisp
       (:export
+       #:init
+       #:shutdown
        #:fbx-file
        #:source
        #:parse

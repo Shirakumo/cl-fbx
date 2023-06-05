@@ -6,6 +6,14 @@
 
 (in-package #:org.shirakumo.fraf.fbx)
 
+(defun init ()
+  (unless (cffi:foreign-library-loaded-p 'fbx:libfbx)
+    (cffi:load-foreign-library 'fbx:libfbx)))
+
+(defun shutdown ()
+  (when (cffi:foreign-library-loaded-p 'fbx:libfbx)
+    (cffi:close-foreign-library 'fbx:libfbx)))
+
 (defclass fbx-file (scene)
   ((source :initarg :source :initform NIL :accessor source)))
 
@@ -19,6 +27,7 @@
     (setf (handle file) NIL)))
 
 (defun parse (source &rest args)
+  (init)
   (cffi:with-foreign-objects ((error '(:struct fbx:error)))
     (let* ((opts (apply #'make-instance 'load-opts args))
            (result (apply #'%parse source opts error args)))
