@@ -5,7 +5,8 @@ This is a wrapper library around "ufbx"(https://github.com/ufbx/ufbx), a C libra
 First, load the library, and then parse a file:
 
 :: common lisp
-(org.shirakumo.fraf.fbx:parse #p"my-model.fbx")
+(org.shirakumo.fraf.fbx:with-file (file #p"my-model.fbx")
+  (describe file))
 ::
 
 Files can be loaded from a file on disk, an octet stream, an octet vector, or a direct memory pointer.

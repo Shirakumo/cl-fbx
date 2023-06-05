@@ -38,6 +38,7 @@
       (:export
        #:init
        #:shutdown
+       #:with-file
        #:fbx-file
        #:source
        #:parse

@@ -70,6 +70,26 @@ See INFLATE"))
 
 ;; file.lisp
 (docs:define-docs
+  (function init
+    "Loads the foreign library.
+
+This is automatically called by PARSE.
+
+See PARSE
+See SHUTDOWN")
+
+  (function shutdown
+    "Unloads the foreign library.
+
+See INIT")
+
+  (function with-file
+    "Convenience macro to handle freeing of the file.
+
+See WITH-FREEING
+See PARSE
+See FBX-FILE (type)")
+
   (type fbx-file
     "Representation of an FBX file.
 

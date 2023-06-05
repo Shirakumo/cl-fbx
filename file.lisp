@@ -14,6 +14,10 @@
   (when (cffi:foreign-library-loaded-p 'fbx:libfbx)
     (cffi:close-foreign-library 'fbx:libfbx)))
 
+(defmacro with-file ((file source &rest args) &body body)
+  `(with-freeing ((,file (parse ,source ,@args)))
+     ,@body))
+
 (defclass fbx-file (scene)
   ((source :initarg :source :initform NIL :accessor source)))
 
