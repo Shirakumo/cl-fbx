@@ -52,7 +52,7 @@
                                    for (name) in bindings
                                    collect `(,gens ,name))
                          ,@body)
-         ,@(loop for gens in gensyms
+         ,@(loop for gens in (reverse gensyms)
                  collect `(free ,gens))))))
 
 (defclass wrapper ()
@@ -792,7 +792,7 @@
              (cffi:foreign-array-to-lisp (fbx:blob-data ret) (list :array :uint8 (fbx:blob-size ret))))))
         (integer
          (fbx:find-int handle name length (or default 0)))
-        (single-float
+        ((float single-float real)
          (fbx:find-real handle name length (or default 0.0)))
         (boolean
          (fbx:find-bool handle name length (or default NIL)))))))
@@ -850,6 +850,13 @@
           default
           (make-instance 'anim-prop :handle ptr)))))
 
+(defmethod find ((element element) (layer anim-layer) &key default type)
+  (declare (ignore type default))
+  (cffi:with-foreign-objects ((list '(:struct fbx:list)))
+    (fbx:find-anim-props list (handle layer) (handle element))
+    (loop for i from 0 below (fbx:list-count list)
+          collect (make-instance 'anim-prop :handle (cffi:mem-aref (fbx:list-data list) :pointer i)))))
+
 (defmethod find ((name string) (node dom-node) &key default type)
   (declare (ignore type))
   (cffi:with-foreign-string ((name length) name)
@@ -857,13 +864,6 @@
       (if (cffi:null-pointer-p ptr)
           default
           (make-instance 'dom-node :handle ptr)))))
-
-(defmethod find ((element element) (layer anim-layer) &key default type)
-  (declare (ignore type default))
-  (cffi:with-foreign-objects ((list '(:struct fbx:list)))
-    (fbx:find-anim-props list (handle layer) (handle element))
-    (loop for i from 0 below (fbx:list-count list)
-          collect (make-instance 'anim-prop :handle (cffi:mem-aref (fbx:list-data list) :pointer i)))))
 
 (defmethod get-element ((element element) (prop prop) type)
   (make-instance 'element :handle (fbx:get-prop-element (handle element) (handle prop) type)))
@@ -893,7 +893,7 @@
 
 (defmethod evaluate ((animation anim) tt &key channel type element node name target)
   (case (or type 'real)
-    (real
+    ((real float single-float)
      (fbx:evaluate-blend-weight (handle animation) (handle channel) (float tt 0d0)))
     (prop
      (cffi:with-foreign-string ((name length) name)
@@ -902,7 +902,7 @@
          prop)))
     (transform
      (let ((transform (or target (make-instance 'transform))))
-       (fbx:evaluate-transform (handle transform) (handle animation) (handle node)( float tt 0d0))
+       (fbx:evaluate-transform (handle transform) (handle animation) (handle node) (float tt 0d0))
        transform))))
 
 (defmethod evaluate ((scene scene) tt &rest options &key animation &allow-other-keys)
@@ -1065,34 +1065,34 @@
 (define-vertex-wrap vertex-vec3 3)
 (define-vertex-wrap vertex-vec4 4)
 
-(defmethod normal-matrix ((node node) &optional data)
-  (unless data (setf data (make-array 16 :element-type 'single-float)))
-  (cffi:with-pointer-to-vector-data (ptr data)
+(defmethod normal-matrix ((node node) &optional matrix)
+  (unless matrix (setf matrix (make-array 16 :element-type 'single-float)))
+  (cffi:with-pointer-to-vector-data (ptr matrix)
     (fbx:get-compatible-matrix-for-normals ptr (handle node))
-    ptr))
+    matrix))
 
-(defmethod skin-vertex-matrix ((skin skin-deformer) index matrix)
+(defmethod skin-vertex-matrix ((skin skin-deformer) index &optional matrix)
+  (unless matrix (setf matrix (make-array 16 :element-type 'single-float)))
   (cffi:with-pointer-to-vector-data (ptr matrix)
     (fbx:get-skin-vertex-matrix ptr (handle skin) index ptr)
     matrix))
 
-(defmethod blend-vertex-offset ((shape blend-shape) index vertex)
+(defmethod blend-vertex-offset ((shape blend-shape) index &potional vertex)
+  (unless vertex (setf vertex (make-array 3 :element-type 'single-float)))
   (cffi:with-pointer-to-vector-data (ptr vertex)
     (fbx:get-blend-shape-vertex-offset ptr (handle shape) index)
     vertex))
 
-(defmethod weighted-face-normal ((face face) vertices)
+(defmethod weighted-face-normal ((face face) vertices &optional normal)
+  (unless normal (setf normal (make-array 3 :element-type 'single-float)))
   (cffi:with-pointer-to-vector-data (ptr vertices)
-    (cffi:with-foreign-objects ((vec '(:struct fbx:vec3)))
-      (fbx:get-weighted-face-normal vec ptr (handle face))
-      (cffi:foreign-array-to-lisp ptr '(:array :float 3) :element-type 'single-float))))
+    (cffi:with-pointer-tovector-data (nptr normal)
+      (fbx:get-weighted-face-normal nptr ptr (handle face))
+      normal)))
 
-(defmethod triangulate-face ((mesh mesh) (face face) (indices null))
-  (let ((indices (make-array (fbx:get-triangulate-face-num-indices (handle face))
-                             :element-type '(unsigned-byte 32))))
-    (triangulate-face mesh face indices)))
-
-(defmethod triangulate-face ((mesh mesh) (face face) (indices vector))
+(defmethod triangulate-face ((mesh mesh) (face face) &optional indices)
+  (unless indices (setf indices (make-array (fbx:get-triangulate-face-num-indices (handle face))
+                                            :element-type '(unsigned-byte 32))))
   (cffi:with-pointer-to-vector-data (ptr indices)
     (cl:values (fbx:triangulate-face ptr (length indices) (handle mesh) (handle face))
                indices)))
