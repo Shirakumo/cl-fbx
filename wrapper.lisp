@@ -280,7 +280,12 @@
                                                                               (when (eql lisp-type 'foreign-vector)
                                                                                 (or (getf slot-opts :lisp-type)
                                                                                     (intern (string (getf slot-opts :foreign-type)))))))
-                                                          (mapcar #'second classes))))))
+                                                          (delete-duplicates
+                                                           (append (loop for (slot-name class type slot-opts) in classes
+                                                                         for slot-type = (cffi:foreign-slot-type type slot-name)
+                                                                         for lisp-type = (to-lisp-type slot-type slot-opts)
+                                                                         collect (if (eql T lisp-type) slot-type lisp-type))
+                                                                   (mapcar #'second classes))))))))
        ,@(loop for (type class copts . slots) in structs
                collect `(defmethod foreign-type ((wrapper ,class)) '(:struct ,type))
                collect `(define-struct-accessors ,type ,class ,@slots)))))
