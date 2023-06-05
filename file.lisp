@@ -22,12 +22,13 @@
   (cffi:with-foreign-objects ((error '(:struct fbx:error)))
     (let* ((opts (apply #'make-instance 'load-opts args))
            (result (apply #'%parse source opts error args)))
-      (check-error error)
+      (unwind-protect (check-error error)
+        (free opts))
       result)))
 
 (defgeneric %parse (source opts error &key &allow-other-keys))
 
-(defmethod %parse ((source string) opts error &rest args)
+(defmethod %parse ((source string) opts error &key args)
   (make-instance 'fbx-file :handle (fbx:load-file source opts error)))
 
 (defmethod %parse ((source pathname) opts error &key)
@@ -69,16 +70,13 @@
     (close (%stream file))
     (setf (%stream file) NIL)))
 
-(defmethod %parse ((source stream) opts error &rest args &key prefix)
+(defmethod %parse ((source stream) opts error &key)
   (let ((stream (cffi:foreign-alloc '(:struct fbx:stream))))
     (setf (fbx:stream-read-fn stream) (cffi:callback stream-read-cb))
     (setf (fbx:stream-skip-fn stream) (cffi:callback stream-skip-cb))
     (setf (fbx:stream-close-fn stream) (cffi:callback stream-close-cb))
     (setf (fbx:stream-user stream) stream)
-    (let ((handle (if prefix
-                      (fbx:load-stream-prefix stream prefix opts error)
-                      (fbx:load-stream stream opts error))))
-      (make-instance 'fbx-file-stream :handle handle :stream source :stream-struct stream))))
+    (make-instance 'fbx-file-stream :handle (fbx:load-stream stream opts error) :stream source :stream-struct stream)))
 
 (cffi:defcallback stream-read-cb :size ((user :pointer) (data :pointer) (size :size))
   (with-ptr-resolve (file user)
@@ -104,3 +102,14 @@
 (cffi:defcallback stream-close-cb :void ((user :pointer))
   (with-ptr-resolve (file user)
     (close (%stream file))))
+
+(defmethod load-cache ((path pathname) &rest args)
+  (apply #'load-cache (namestring path) args))
+
+(defmethod load-cache ((path string) &rest args)
+  (cffi:with-foreign-objects ((error '(:struct fbx:error)))
+    (let* ((opts (apply #'make-instance 'geometry-cache-opts args))
+           (handle (fbx:load-geometry-cache path opts error)))
+      (unwind-protect (check-error error)
+        (free opts))
+      (make-instance 'geometry-cache :handle handle))))

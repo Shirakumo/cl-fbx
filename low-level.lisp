@@ -1995,24 +1995,8 @@
   (num_normal_indices :size)
   (assume_smooth :bool))
 
-(cffi:defcfun (generate-normal-mapping "ufbx_generate_normal_mapping") :size
-  (mesh :pointer)
-  (topo :pointer)
-  (num_topo :size)
-  (normal_indices :pointer)
-  (num_normal_indices :size)
-  (assume_smooth :bool))
-
 (cffi:defcfun (compute-normals "ufbx_catch_compute_normals") :void
   (panic :pointer)
-  (mesh :pointer)
-  (positions :pointer)
-  (normal_indices :pointer)
-  (num_normal_indices :size)
-  (normals :pointer)
-  (num_normals :size))
-
-(cffi:defcfun (compute-normals "ufbx_compute_normals") :void
   (mesh :pointer)
   (positions :pointer)
   (normal_indices :pointer)
@@ -2034,12 +2018,6 @@
 
 (cffi:defcfun (load-geometry-cache "ufbx_load_geometry_cache") :pointer
   (filename :pointer)
-  (opts :pointer)
-  (error :pointer))
-
-(cffi:defcfun (load-geometry-cache "ufbx_load_geometry_cache_len") :pointer
-  (filename :pointer)
-  (filename_len :size)
   (opts :pointer)
   (error :pointer))
 
@@ -2088,6 +2066,7 @@
   (allocator :pointer)
   (error :pointer))
 
+;;;;;;;;
 (cffi:defcfun (get-vertex-real "ufbx_catch_get_vertex_real") :float
   (panic :pointer)
   (v :pointer)
@@ -2153,11 +2132,6 @@
   (retval :pointer)
   (anim :pointer)
   (node :pointer)
-  (time :double))
-
-(cffi:defcfun (evaluate-blend-weight "ufbx_ffi_evaluate_blend_weight") :float
-  (anim :pointer)
-  (channel :pointer)
   (time :double))
 
 (cffi:defcfun (prepare-prop-overrides "ufbx_ffi_prepare_prop_overrides") :void

@@ -24,5 +24,6 @@
                :trivial-features
                :trivial-garbage
                :trivial-extensible-sequences
+               :float-features
                :static-vectors
                :documentation-utils))

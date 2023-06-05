@@ -81,6 +81,17 @@
 (defmethod sequences:length ((vector foreign-vector))
   (fbx:list-count (handle vector)))
 
+(defmethod data ((vector foreign-vector))
+  (fbx:list-data (handle vector)))
+
+(defmethod free ((vector foreign-vector))
+  (when (handle vector)
+    (unless (cffi:null-pointer-p (fbx:list-data (handle vector)))
+      (cffi:foreign-free (fbx:list-data (handle vector))))
+    (setf (fbx:list-data (handle vector)) (cffi:null-pointer))
+    (setf (fbx:list-count (handle vector)) 0)
+    (setf (handle vector) NIL)))
+
 (defclass packed-foreign-vector (foreign-vector)
   ())
 
@@ -104,7 +115,7 @@
   (setf (cffi:mem-aref (fbx:list-data (handle vector)) (foreign-type vector) index) value)
   value)
 
-(defun make-foreign-vector (ptr lisp-type foreign-type)
+(defun wrap-foreign-vector (ptr lisp-type foreign-type)
   (case foreign-type
     ((:bool :double :float :char :pointer :size :int :int64 :uint64 :int32 :uint32 :int8 :uint8)
      (make-instance 'immediate-foreign-vector :handle ptr :foreign-type foreign-type))
@@ -114,10 +125,31 @@
               face-group subdivision-weight-range subdivision-weight line-segment lod-level skin-vertex
               skin-weight blend-keyframe cache-frame cache-channel material-texture texture-layer
               shader-texture-input texture-file shader-prop-binding anim-layer-desc prop-override
-              anim-prop keyframe constraint-target bone-pose name-element warning)
-        (make-instance 'foreign-vector :handle ptr :foreign-type foreign-type :lisp-type lisp-type))
+              anim-prop keyframe constraint-target bone-pose name-element warning topo-edge)
+        (make-instance 'packed-foreign-vector :handle ptr :foreign-type foreign-type :lisp-type lisp-type))
        (T
         (make-instance 'foreign-vector :handle ptr :foreign-type foreign-type :lisp-type lisp-type))))))
+
+(defun make-foreign-vector (foreign-type size)
+  (let ((list (cffi:foreign-alloc '(:struct fbx:list))))
+    (setf (fbx:list-count list) size)
+    (case foreign-type
+      ((:bool :double :float :char :pointer :size :int :int64 :uint64 :int32 :uint32 :int8 :uint8)
+       (setf (fbx:list-data list) (cffi:foreign-alloc foreign-type :count size))
+       (make-instance 'immediate-foreign-vector :handle list :foreign-type foreign-type))
+      (T
+       (let ((lisp-type (intern (string foreign-type) #.*package*)))
+         (case lisp-type
+           ((vec2 vec3 vec4 fbx-string dom-value prop connection uv-set color-set edge face mesh-material
+                  face-group subdivision-weight-range subdivision-weight line-segment lod-level skin-vertex
+                  skin-weight blend-keyframe cache-frame cache-channel material-texture texture-layer
+                  shader-texture-input texture-file shader-prop-binding anim-layer-desc prop-override
+                  anim-prop keyframe constraint-target bone-pose name-element warning topo-edge)
+            (setf (fbx:list-data list) (cffi:foreign-alloc foreign-type :count size))
+            (make-instance 'packed-foreign-vector :handle list :foreign-type foreign-type :lisp-type lisp-type))
+           (T
+            (setf (fbx:list-data list) (cffi:foreign-alloc :pointer :count size :initial-element (cffi:null-pointer)))
+            (make-instance 'foreign-vector :handle list :foreign-type foreign-type :lisp-type lisp-type))))))))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defun compile-slot-accessor (type class slot-name slot-type slot-opts)
@@ -142,7 +174,7 @@
                                 (T T))))))
       `(progn (defmethod ,accessor ((wrapper ,class))
                 ,(cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
-                        `(make-foreign-vector (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)
+                        `(wrap-foreign-vector (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)
                                               ',(or (getf slot-opts :lisp-type)
                                                     (when (getf slot-opts :foreign-type)
                                                       (intern (string (getf slot-opts :foreign-type))))
@@ -200,13 +232,13 @@
 
 (defmacro define-struct-wrappers (&body structs)
   (let ((structs (loop for (type . rest) in structs
-                       collect (destructuring-bind (type &optional (class (intern (string type)))) (if (listp type) type (list type))
-                                 (list* type class rest)))))
+                       collect (destructuring-bind (type &optional (class (intern (string type))) &rest copts) (if (listp type) type (list type))
+                                 (list* type class copts rest)))))
     `(progn
-       ,@(loop for (type class) in structs
-               collect `(defclass ,class (wrapper)
+       ,@(loop for (type class opts) in structs
+               collect `(defclass ,class (,@(getf opts :direct-superclasses) wrapper)
                           ((handle :initform (cffi:foreign-alloc '(:struct ,type))))))
-       ,@(loop for (type class . slots) in structs
+       ,@(loop for (type class copts . slots) in structs
                collect `(defmethod foreign-type ((wrapper ,class)) '(:struct ,type))
                collect `(define-struct-accessors ,type ,class ,@slots)))))
 
@@ -258,16 +290,16 @@
   (fbx:vertex-attrib
    (values :lisp-type T)
    (indices :foreign-type :uint32))
-  (fbx:vertex-real
+  ((fbx:vertex-real vertex-real :direct-superclasses (sequences:sequence))
    (values :lisp-type single-float :foreign-type :float)
    (indices :foreign-type :uint32))
-  (fbx:vertex-vec2
+  ((fbx:vertex-vec2 vertex-vec2 :direct-superclasses (sequences:sequence))
    (values :lisp-type vec2)
    (indices :foreign-type :uint32))
-  (fbx:vertex-vec3
+  ((fbx:vertex-vec3 vertex-vec3 :direct-superclasses (sequences:sequence))
    (values :lisp-type vec3)
    (indices :foreign-type :uint32))
-  (fbx:vertex-vec4
+  ((fbx:vertex-vec4 vertex-vec4 :direct-superclasses (sequences:sequence))
    (values :lisp-type vec4)
    (indices :foreign-type :uint32))
   (fbx:uv-set)
@@ -562,6 +594,26 @@
   ;;(fbx:panic)
   )
 
+(defmethod free ((scene scene))
+  (when (handle scene)
+    (fbx:free-scene (handle scene))
+    (setf (handle scene) NIL)))
+
+(defmethod free ((curve line-curve))
+  (when (handle curve)
+    (fbx:free-line-curve (handle curve))
+    (setf (handle curve) NIL)))
+
+(defmethod free ((mesh mesh))
+  (when (handle mesh)
+    (fbx:free-mesh (handle mesh))
+    (setf (handle mesh) NIL)))
+
+(defmethod free ((geometry-cache geometry-cache))
+  (when (handle geometry-cache)
+    (fbx:free-geometry-cache (handle geometry-cache))
+    (setf (handle geometry-cache) NIL)))
+
 (defmethod (setf data) ((vector vector) (blob blob))
   (let* ((handle (handle blob))
          (pointer (cffi:foreign-funcall "realloc" :pointer (fbx:blob-data handle) :size (length vector))))
@@ -644,10 +696,15 @@
     (setf (fbx:allocator-opts-max-chunk-size handle) (max-chunk-size allocator))
     allocator))
 
-(defmethod find ((name string) (props props) default)
+(defgeneric find (name container &key default type))
+(defmethod find ((name string) (props props) &key default type)
   (let ((handle (handle props)))
     (cffi:with-foreign-string ((name length) name)
-      (etypecase default
+      (cond ((and default (not type))
+             (setf type (type-of default)))
+            ((not type)
+             (setf type 'prop)))
+      (ecase type
         (prop
          (let ((ptr (fbx:find-prop handle name length)))
            (if (cffi:null-pointer-p ptr)
@@ -655,27 +712,338 @@
                (make-instance 'prop :handle ptr))))
         (vec3
          (cffi:with-foreign-objects ((ret '(:struct fbx:vec3)))
-           (fbx:find-vec3 (handle ret) props name length (handle default))
-           (let ((vec (make-array 3 :element-type 'single-float)))
-             (setf (aref vec 0) (fbx:vec3-x ret))
-             (setf (aref vec 1) (fbx:vec3-y ret))
-             (setf (aref vec 2) (fbx:vec3-z ret))
-             vec)))
+           (unless default
+             (setf (fbx:vec3-x ret) float-features:single-float-nan)
+             (setf (fbx:vec3-y ret) float-features:single-float-nan)
+             (setf (fbx:vec3-z ret) float-features:single-float-nan))
+           (fbx:find-vec3 ret props name length (if default (handle default) ret))
+           (unless (float-features:float-nan-p (fbx:vec3-x ret))
+             (let ((vec (make-array 3 :element-type 'single-float)))
+               (setf (aref vec 0) (fbx:vec3-x ret))
+               (setf (aref vec 1) (fbx:vec3-y ret))
+               (setf (aref vec 2) (fbx:vec3-z ret))
+               vec))))
         (string
          (cffi:with-foreign-objects ((str '(:struct fbx:string)))
-           (setf (fbx:string-data str) default)
-           (setf (fbx:string-length str) (length default))
+           (cond (default
+                  (setf (fbx:string-data str) default)
+                  (setf (fbx:string-length str) (length default)))
+                 (T
+                  (setf (fbx:string-data str) (cffi:null-pointer))
+                  (setf (fbx:string-length str) 0)))
            (fbx:find-string str props name length str)
-           (fbx:string-data str)))
+           (unless (cffi:null-pointer-p (cffi:foreign-slot-pointer str '(:struct fbx:string) 'fbx:data))
+             (fbx:string-data str))))
         (blob
          (cffi:with-foreign-objects ((ret '(:struct fbx:blob)))
-           (fbx:find-blob (handle ret) props name length (handle default))
-           (cffi:foreign-array-to-lisp (fbx:blob-data ret) (list :array :uint8 (fbx:blob-size ret)))))
+           (setf (fbx:blob-size ret) 0)
+           (setf (fbx:blob-data ret) (cffi:null-pointer))
+           (fbx:find-blob ret props name length (if default (handle default) ret))
+           (unless (cffi:null-pointer-p (fbx:blob-data ret))
+             (cffi:foreign-array-to-lisp (fbx:blob-data ret) (list :array :uint8 (fbx:blob-size ret))))))
         (integer
-         (fbx:find-int handle name length default))
+         (fbx:find-int handle name length (or default 0)))
         (single-float
-         (fbx:find-real handle name length default))
+         (fbx:find-real handle name length (or default 0.0)))
         (boolean
-         (fbx:find-bool handle name length default))))))
+         (fbx:find-bool handle name length (or default NIL)))))))
 
+(defmethod find ((name string) (scene scene) &key default type)
+  (let ((handle (handle scene)))
+    (cffi:with-foreign-string ((name length) name)
+      (cond ((and default (not type))
+             (setf type (type-of default)))
+            ((not type)
+             (setf type 'node)))
+      (case type
+        (node
+         (let ((ptr (fbx:find-node handle name length)))
+           (if (cffi:null-pointer-p ptr)
+               default
+               (make-instance 'node :handle ptr))))
+        (anim-stack
+         (let ((ptr (fbx:find-anim-stack handle name length)))
+           (if (cffi:null-pointer-p ptr)
+               default
+               (make-instance 'anim-stack :handle ptr))))
+        (material
+         (let ((ptr (fbx:find-material handle name length)))
+           (if (cffi:null-pointer-p ptr)
+               default
+               (make-instance 'material :handle ptr))))
+        (T
+         (let ((ptr (fbx:find-element handle (intern (string type) "KEYWORD") name length)))
+           (if (cffi:null-pointer-p ptr)
+               default
+               (make-instance type :handle ptr))))))))
 
+(defmethod find ((name string) (material material) &key default type)
+  (declare (ignore type))
+  (cffi:with-foreign-string ((name length) name)
+    (let ((ptr (fbx:find-prop-texture (handle material) name length)))
+      (if (cffi:null-pointer-p ptr)
+          default
+          (make-instance 'texture :handle ptr)))))
+
+(defmethod find ((name string) (shader shader) &key default type)
+  (declare (ignore type))
+  (cffi:with-foreign-string ((name length) name)
+    (let ((ptr (fbx:find-shader-texture-input (handle material) name length)))
+      (if (cffi:null-pointer-p ptr)
+          default
+          (make-instance 'shader-texture-input :handle ptr)))))
+
+(defmethod find ((name string) (layer anim-layer) &key default type element)
+  (declare (ignore type))
+  (cffi:with-foreign-string ((name length) name)
+    (let ((ptr (fbx:find-anim-prop (handle layer) (handle element) name length)))
+      (if (cffi:null-pointer-p ptr)
+          default
+          (make-instance 'anim-prop :handle ptr)))))
+
+(defmethod find ((name string) (node dom-node) &key default type)
+  (declare (ignore type))
+  (cffi:with-foreign-string ((name length) name)
+    (let ((ptr (fbx:dom-find (handle node) name length)))
+      (if (cffi:null-pointer-p ptr)
+          default
+          (make-instance 'dom-node :handle ptr)))))
+
+(defmethod find ((element element) (layer anim-layer) &key default type)
+  (declare (ignore type default))
+  (cffi:with-foreign-objects ((list '(:struct fbx:list)))
+    (fbx:find-anim-props list (handle layer) (handle element))
+    (loop for i from 0 below (fbx:list-count list)
+          collect (make-instance 'anim-prop :handle (cffi:mem-aref (fbx:list-data list) :pointer i)))))
+
+(defmethod get-element ((element element) (prop prop) type)
+  (make-instance 'element :handle (fbx:get-prop-element (handle element) (handle prop) type)))
+
+(defmethod evaluate ((curve anim-curve) tt &key default)
+  (fbx:evaluate-curve (handle curve) (float tt 0d0) (or default 0f0)))
+
+(defmethod evaluate ((value anim-value) tt &key type)
+  (case type
+    ((real float single-float)
+     (fbx:evaluate-anim-value-real (handle value) (float tt 0d0)))
+    (vec2
+     (cffi:with-foreign-objects ((ret '(:struct fbx:vec2)))
+       (fbx:evaluate-anim-value-vec2 ret (handle value) (float tt 0d0))
+       (let ((vec (make-array 2 :element-type 'single-float)))
+         (setf (aref vec 0) (fbx:vec2-x ret))
+         (setf (aref vec 1) (fbx:vec2-y ret))
+         vec)))
+    (vec3
+     (cffi:with-foreign-objects ((ret '(:struct fbx:vec3)))
+       (fbx:evaluate-anim-value-vec3 ret (handle value) (float tt 0d0))
+       (let ((vec (make-array 3 :element-type 'single-float)))
+         (setf (aref vec 0) (fbx:vec3-x ret))
+         (setf (aref vec 1) (fbx:vec3-y ret))
+         (setf (aref vec 2) (fbx:vec3-z ret))
+         vec)))))
+
+(defmethod evaluate ((animation anim) tt &key channel type element node name target)
+  (case (or type 'real)
+    (real
+     (fbx:evaluate-blend-weight (handle animation) (handle channel) (float tt 0d0)))
+    (prop
+     (cffi:with-foreign-string ((name length) name)
+       (let ((prop (or target (make-instance 'prop))))
+         (fbx:evaluate-prop (handle prop) (handle animation) (handle element) name length (float tt 0d0))
+         prop)))
+    (transform
+     (let ((transform (or target (make-instance 'transform))))
+       (fbx:evaluate-transform (handle transform) (handle animation) (handle node)( float tt 0d0))
+       transform))))
+
+(defmethod evaluate ((scene scene) tt &rest options &key animation &allow-other-keys)
+  (cffi:with-foreign-objects ((error '(:struct fbx:error)))
+    (let* ((opts (apply #'make-instance 'evaluate-opts options))
+           (handle (fbx:evaluate-scene (handle scene) (handle animation) (float tt 0d0) opts error)))
+      (unwind-protect
+           (check-error error)
+        (free opts))
+      (make-instance 'scene :handdle handle))))
+
+(defmethod evaluate ((basis nurbs-basis) u &key weights derivatives)
+  (let ((count (order basis)))
+    (unless weights (setf weights (make-array count :element-type 'single-float)))
+    (unless derivatives (setf derivatives (make-array count :element-type 'single-float)))
+    (cffi:with-pointer-to-vector-data (wptr weights)
+      (cffi:with-pointer-to-vector-data (dptr derivatives)
+        (cl:values (fbx:evaluate-nurbs-basis (handle basis) (float u 0f0) wptr (length weights) dptr (length derivatives))
+                   weights
+                   derivatives)))))
+
+(defmethod evaluate ((curve nurbs-curve) u &key point)
+  (unless point (setf point (make-instance 'curve-point)))
+  (fbx:evaluate-nurbs-curve (handle point) (handle curve) (float u 0f0))
+  point)
+
+(defmethod evaluate ((curve nurbs-surface) uv &key point)
+  (unless point (setf point (make-instance 'surface-point)))
+  (destructuring-bind (u . v) uv
+    (fbx:evaluate-nurbs-surface (handle point) (handle curve) (float u 0f0) (float v 0f0)))
+  point)
+
+(defmethod add-offsets ((shape blend-shape) vertices weight)
+  (cffi:with-pointer-to-vector-data (vptr vertices)
+    (fbx:add-blend-shape-vertex-offsets (handle shape) vptr (length vertices) (float weight 0f0))))
+
+(defmethod add-offsets ((shape blend-deformer) vertices weight)
+  (cffi:with-pointer-to-vector-data (vptr vertices)
+    (fbx:add-blend-vertex-offsets (handle shape) vptr (length vertices) (float weight 0f0))))
+
+(defmethod tessellate ((curve nurbs-curve) &rest options)
+  (cffi:with-foreign-objects ((error '(:struct fbx:error)))
+    (let* ((opts (apply #'make-instance 'tessellate-curve-opts options))
+           (handle (fbx:tessellate-nurbs-curve (handle curve) (handle opts) error)))
+      (unwind-protect (check-error error)
+        (free opts))
+      (make-instance 'line-curve :handle handle))))
+
+(defmethod tessellate ((surface nurbs-surface) &rest options)
+  (cffi:with-foreign-objects ((error '(:struct fbx:error)))
+    (let* ((opts (apply #'make-instance 'tessellate-surface-opts options))
+           (handle (fbx:tessellate-nurbs-surface (handle surface) (handle opts) error)))
+      (unwind-protect (check-error error)
+        (free opts))
+      (make-instance 'mesh :handle handle))))
+
+(defmethod compute-topology ((mesh mesh) &key topo)
+  (if topo
+      (cffi:with-foreign-objects ((panic '(:struct fbx:panic)))
+        (fbx:compute-topology panic (handle mesh) (handle topo) (num-indices mesh))
+        (check-panic panic)
+        topo)
+      (let ((topo (make-foreign-vector '(:struct fbx:topo-edge) (num-indices mesh))))
+        (cffi:with-foreign-objects ((panic '(:struct fbx:panic)))
+          (fbx:compute-topology panic (handle mesh) (handle topo) (num-indices mesh))
+          (when (fbx:panic-did-panic panic)
+            (free topo)
+            (fbx-panic panic))
+          topo))))
+
+(defmethod next-vertex ((vec foreign-vector) index)
+  (cffi:with-foreign-objects ((panic '(:struct fbx:panic)))
+    (let ((res (fbx:topo-next-vertex-edge panic (data vec) (length vec) index)))
+      (check-panic panic)
+      res)))
+
+(defmethod prev-vertex ((vec foreign-vector) index)
+  (cffi:with-foreign-objects ((panic '(:struct fbx:panic)))
+    (let ((res (fbx:topo-prev-vertex-edge panic (data vec) (length vec) index)))
+      (check-panic panic)
+      res)))
+
+(defmethod generate-normal-mapping ((mesh mesh) (topo foreign-vector) &key assume-smooth normal-indices)
+  (cffi:with-foreign-objects ((panic '(:struct fbx:panic)))
+    (unless normal-indices
+      (setf normal-indices (make-array (num-indices mesh) :element-type '(unsigned-byte 32))))
+    (cffi:with-pointer-to-vector-data (ptr normal-indices)
+      (cl:values (fbx:generate-normal-mapping panic (handle mesh) (data topo) (length topo) ptr (length normal-indices) assume-smooth)
+                 normal-indices))))
+
+(defmethod compute-normals ((mesh mesh) positions normal-indices &key normals)
+  (cffi:with-foreign-objects ((panic '(:struct fbx:panic)))
+    (unless normals
+      (setf normals (make-array (* 3 (length normal-indices)) :element-type 'single-float)))
+    (cffi:with-pointer-to-vector-data (nptr normals)
+      (cffi:with-pointer-to-vector-data (pptr positions)
+        (cl:values (fbx:compute-normals panic (handle mesh) pptr (data normal-indices) (length normal-indices) nptr (truncate (length normals) 3))
+                   normals)))))
+
+(defmethod subdivide-mesh ((mesh mesh) level &rest opts)
+  (cffi:with-foreign-objects ((error '(:struct fbx:error)))
+    (let* ((opts (apply #'make-instance 'subdivide-opts opts))
+           (ptr (fbx:subdivide-mesh (handle mesh) level opts error)))
+      (unwind-protect (check-error error)
+        (free opts))
+      (make-instance 'mesh :handle ptr))))
+
+(defmethod inflate ((target vector) (input inflate-input))
+  (cffi:with-pointer-to-vector-data (ptr target)
+    (cffi:with-foreign-objects ((retain '(:struct fbx:inflate-retain)))
+      (setf (fbx:inflate-retain-initialized retain) NIL)
+      (let ((decompressed (fbx:inflate ptr (length target) (handle input) retain)))
+        (if (< decompressed 0)
+            (inflate-error decompressed)
+            decompressed)))))
+
+(defmethod read-cache ((cache cache-frame) vector &rest opts &key (type 'real) &allow-other-keys)
+  (let ((opts (apply #'make-instance 'geometry-cache-data-opts opts)))
+    (cffi:with-pointer-to-vector-data (ptr vector)
+      (unwind-protect
+           (ecase type
+             (vec3
+              (fbx:read-geometry-cache-vec3 (handle cache) ptr (truncate (length vector) 3) opts))
+             ((single-float float real)
+              (fbx:read-geometry-cache-real (handle cache) ptr (length vector) opts)))
+        (free opts)))))
+
+(defmethod sample-cache ((cache cache-frame) vector time &rest opts &key (type 'real) &allow-other-keys)
+  (let ((opts (apply #'make-instance 'geometry-cache-data-opts opts)))
+    (cffi:with-pointer-to-vector-data (ptr vector)
+      (unwind-protect
+           (ecase type
+             (vec3
+              (fbx:sample-geometry-cache-vec3 (handle cache) (float time 0d0) ptr (truncate (length vector) 3) opts))
+             ((single-float float real)
+              (fbx:sample-geometry-cache-real (handle cache) (float time 0d0) ptr (length vector) opts)))
+        (free opts)))))
+
+(defmacro define-vertex-wrap (type wrap-size)
+  (let ((element-type (ecase wrap-size
+                        (1 :float)
+                        (2 '(:struct fbx:vec2))
+                        (3 '(:struct fbx:vec3))
+                        (4 '(:struct fbx:vec4)))))
+    `(progn
+       (defmethod sequences:length ((vertex ,type))
+         (fbx:list-count (cffi:foreign-slot-pointer (handle vertex) '(:struct fbx:vertex-real) 'fbx::values)))
+
+       (defmethod sequences:elt ((vertex ,type) index)
+         (let* ((handle (handle vertex))
+                (idx (cffi:mem-aref (fbx:list-data (cffi:foreign-slot-pointer handle '(:struct fbx:vertex-real) 'fbx::indices)) :uint32 index))
+                (ptr (cffi:mem-aptr (fbx:list-data (cffi:foreign-slot-pointer handle '(:struct fbx:vertex-real) 'fbx::values)) ',element-type idx)))
+           ,(case wrap-size
+              (1 `(cffi:mem-ref ptr ,element-type))
+              (T `(cffi:foreign-array-to-lisp ptr '(:array :float ,wrap-size)
+                                              :element-type 'single-float))))))))
+
+(define-vertex-wrap vertex-real 1)
+(define-vertex-wrap vertex-vec2 2)
+(define-vertex-wrap vertex-vec3 3)
+(define-vertex-wrap vertex-vec4 4)
+
+(defmethod normal-matrix ((node node) &optional data)
+  (unless data (setf data (make-array 16 :element-type 'single-float)))
+  (cffi:with-pointer-to-vector-data (ptr data)
+    (fbx:get-compatible-matrix-for-normals ptr (handle node))
+    ptr))
+
+(defmethod skin-vertex-matrix ((skin skin-deformer) index matrix)
+  (cffi:with-pointer-to-vector-data (ptr matrix)
+    (fbx:get-skin-vertex-matrix ptr (handle skin) index ptr)
+    matrix))
+
+(defmethod blend-vertex-offset ((shape blend-shape) index vertex)
+  (cffi:with-pointer-to-vector-data (ptr vertex)
+    (fbx:get-blend-shape-vertex-offset ptr (handle shape) index)
+    vertex))
+
+(defmethod weighted-face-normal ((face face) vertices)
+  (cffi:with-pointer-to-vector-data (ptr vertices)
+    (cffi:with-foreign-objects ((vec '(:struct fbx:vec3)))
+      (fbx:get-weighted-face-normal vec ptr (handle face))
+      (cffi:foreign-array-to-lisp ptr '(:array :float 3) :element-type 'single-float))))
+
+(defmethod triangulate-face ((mesh mesh) (face face) (indices null))
+  (let ((indices (make-array (fbx:get-triangulate-face-num-indices (handle face))
+                             :element-type '(unsigned-byte 32))))
+    (triangulate-face mesh face indices)))
+
+(defmethod triangulate-face ((mesh mesh) (face face) (indices vector))
+  (cffi:with-pointer-to-vector-data (ptr indices)
+    (cl:values (fbx:triangulate-face ptr (length indices) (handle mesh) (handle face))
+               indices)))
