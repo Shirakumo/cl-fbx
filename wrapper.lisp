@@ -172,54 +172,56 @@
                                 ((:size :int :int64 :uint64 :int32 :uint32 :int8 :uint8) 'integer)
                                 (:bool T)
                                 (T T))))))
-      `(progn (defmethod ,accessor ((wrapper ,class))
-                ,(cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
-                        `(wrap-foreign-vector (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)
-                                              ',(or (getf slot-opts :lisp-type)
-                                                    (when (getf slot-opts :foreign-type)
-                                                      (intern (string (getf slot-opts :foreign-type))))
-                                                    (progn (warn "~&; No canonical type known for ~a.~a" type slot-name)
-                                                           'wrapper))
-                                              ',(or (getf slot-opts :foreign-type)
-                                                    (when (getf slot-opts :lisp-type)
-                                                      (intern (string (getf slot-opts :lisp-type)) (symbol-package type)))
-                                                    :pointer)))
-                       ((and (listp slot-type) (eql 'fbx:string (first slot-type)))
-                        `(fbx:string-data (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)))
-                       ((and (listp slot-type) (eql :struct (first slot-type)))
-                        `(make-instance ',lisp-type :handle (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)))
-                       ((and (eql :pointer slot-type) (not (eql T lisp-type)))
-                        `(let ((value (,slot-fun (handle wrapper))))
-                           (unless (cffi:null-pointer-p value)
-                             (make-instance ',lisp-type :handle value))))
-                       (T
-                        `(,slot-fun (handle wrapper)))))
-              
-              (defmethod (setf ,accessor) ((value ,lisp-type) (wrapper ,class))
-                ,(cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
-                        `(error "Impl"))
-                       ((and (listp slot-type) (eql 'fbx:string (first slot-type)))
-                        `(setf (fbx:string-data (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)) value
-                               (fbx:string-length (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)) (length value)))
-                       ((and (listp slot-type) (eql :struct (first slot-type)))
-                        `(static-vectors:replace-foreign-memory
-                          (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)
-                          (handle value)
-                          ,(cffi:foreign-type-size slot-type)))
-                       ((eql :pointer slot-type)
-                        `(setf (,slot-fun (handle wrapper)) (handle value)))
-                       (T
-                        `(setf (,slot-fun (handle wrapper)) value)))
-                value)
+      `(progn
+         (export '(,accessor))
+         (defmethod ,accessor ((wrapper ,class))
+           ,(cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
+                   `(wrap-foreign-vector (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)
+                                         ',(or (getf slot-opts :lisp-type)
+                                               (when (getf slot-opts :foreign-type)
+                                                 (intern (string (getf slot-opts :foreign-type))))
+                                               (progn (warn "~&; No canonical type known for ~a.~a" type slot-name)
+                                                      'wrapper))
+                                         ',(or (getf slot-opts :foreign-type)
+                                               (when (getf slot-opts :lisp-type)
+                                                 (intern (string (getf slot-opts :lisp-type)) (symbol-package type)))
+                                               :pointer)))
+                  ((and (listp slot-type) (eql 'fbx:string (first slot-type)))
+                   `(fbx:string-data (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)))
+                  ((and (listp slot-type) (eql :struct (first slot-type)))
+                   `(make-instance ',lisp-type :handle (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)))
+                  ((and (eql :pointer slot-type) (not (eql T lisp-type)))
+                   `(let ((value (,slot-fun (handle wrapper))))
+                      (unless (cffi:null-pointer-p value)
+                        (make-instance ',lisp-type :handle value))))
+                  (T
+                   `(,slot-fun (handle wrapper)))))
+         
+         (defmethod (setf ,accessor) ((value ,lisp-type) (wrapper ,class))
+           ,(cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
+                   `(error "Impl"))
+                  ((and (listp slot-type) (eql 'fbx:string (first slot-type)))
+                   `(setf (fbx:string-data (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)) value
+                          (fbx:string-length (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)) (length value)))
+                  ((and (listp slot-type) (eql :struct (first slot-type)))
+                   `(static-vectors:replace-foreign-memory
+                     (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)
+                     (handle value)
+                     ,(cffi:foreign-type-size slot-type)))
+                  ((eql :pointer slot-type)
+                   `(setf (,slot-fun (handle wrapper)) (handle value)))
+                  (T
+                   `(setf (,slot-fun (handle wrapper)) value)))
+           value)
 
-              ,@(case slot-type
-                  (:pointer
-                   `((defmethod (setf ,accessor) ((value null) (wrapper ,class))
-                       (setf (,slot-fun (handle wrapper)) (cffi:null-pointer))
-                       value)))
-                  (fbx:blob
-                   `((defmethod (setf ,accessor) ((value vector) (wrapper ,class))
-                       (setf (data (,accessor wrapper)) value)))))))))
+         ,@(case slot-type
+             (:pointer
+              `((defmethod (setf ,accessor) ((value null) (wrapper ,class))
+                  (setf (,slot-fun (handle wrapper)) (cffi:null-pointer))
+                  value)))
+             (fbx:blob
+              `((defmethod (setf ,accessor) ((value vector) (wrapper ,class))
+                  (setf (data (,accessor wrapper)) value)))))))))
 
 (defmacro define-struct-accessors (type class &body slot-options)
   (let ((slots (cffi:foreign-slot-names `(:struct ,type))))
@@ -236,6 +238,7 @@
                                  (list* type class copts rest)))))
     `(progn
        ,@(loop for (type class opts) in structs
+               collect `(export '(,class))
                collect `(defclass ,class (,@(getf opts :direct-superclasses) wrapper)
                           ((handle :initform (cffi:foreign-alloc '(:struct ,type))))))
        ,@(loop for (type class copts . slots) in structs
