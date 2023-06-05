@@ -15,7 +15,7 @@
   (if value
       (setf (gethash ptr *global-pointer-table*) value)
       (remhash ptr *global-pointer-table*))
-  vlaue)
+  value)
 
 (defmacro with-ptr-resolve ((value ptr) &body body)
   `(let ((,value (global-pointer ,ptr)))
@@ -837,7 +837,7 @@
 (defmethod find ((name string) (shader shader) &key default type)
   (declare (ignore type))
   (cffi:with-foreign-string ((name length) name)
-    (let ((ptr (fbx:find-shader-texture-input (handle material) name length)))
+    (let ((ptr (fbx:find-shader-texture-input (handle shader) name length)))
       (if (cffi:null-pointer-p ptr)
           default
           (make-instance 'shader-texture-input :handle ptr)))))
@@ -1086,7 +1086,7 @@
 (defmethod weighted-face-normal ((face face) vertices &optional normal)
   (unless normal (setf normal (make-array 3 :element-type 'single-float)))
   (cffi:with-pointer-to-vector-data (ptr vertices)
-    (cffi:with-pointer-tovector-data (nptr normal)
+    (cffi:with-pointer-to-vector-data (nptr normal)
       (fbx:get-weighted-face-normal nptr ptr (handle face))
       normal)))
 
