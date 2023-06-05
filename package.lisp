@@ -52,6 +52,7 @@
        #:reallocate
        #:deallocate
        #:update
+       #:with-freeing
        #:wrapper
        #:handle
        #:foreign-type

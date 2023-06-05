@@ -43,6 +43,18 @@
              (funcall (fdefinition (list 'setf slot-name)) value wrapper)))
   wrapper)
 
+(defmacro with-freeing (bindings &body body)
+  (let ((gensyms (loop for (name) in bindings collect (gensym (string name)))))
+    `(let ,(loop for gens in gensyms
+                 for binding in bindings
+                 collect `(,gens ,(second binding)))
+       (unwind-protect (let ,(loop for gens in gensyms
+                                   for (name) in bindings
+                                   collect `(,gens ,name))
+                         ,@body)
+         ,@(loop for gens in gensyms
+                 collect `(free ,gens))))))
+
 (defclass wrapper ()
   ((handle :initarg :handle :initform NIL :accessor handle)))
 
@@ -152,26 +164,30 @@
             (make-instance 'foreign-vector :handle list :foreign-type foreign-type :lisp-type lisp-type))))))))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun to-lisp-type (slot-type slot-opts)
+    (cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
+           'foreign-vector)
+          ((and (listp slot-type) (eql :struct (first slot-type)))
+           (or (getf slot-opts :lisp-type)
+               (intern (string (second slot-type)))))
+          ((and (listp slot-type) (eql :array (first slot-type)))
+           'vector)
+          (T (case slot-type
+               (:pointer (or (getf slot-opts :lisp-type) 'cffi:foreign-pointer))
+               (:float 'single-float)
+               (:double 'double-float)
+               (:char 'cl:character)
+               ((:size :int :int64 :uint64 :int32 :uint32 :int8 :uint8) 'integer)
+               (:bool 'boolean)
+               (T T)))))
+  
   (defun compile-slot-accessor (type class slot-name slot-type slot-opts)
-    (let ((accessor (or (getf slot-opts :accessor) (intern (string slot-name))))
-          (slot-fun (find-symbol (format NIL "~a-~a" type slot-name) (symbol-package type)))
-          (lisp-type (cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
-                            'foreign-vector)
-                           ((and (listp slot-type) (eql :struct (first slot-type)))
-                            (or (getf slot-opts :lisp-type)
-                                (intern (string (second slot-type)))))
-                           ((and (listp slot-type) (eql :array (first slot-type)))
-                            'vector)
-                           (T (case slot-type
-                                (:pointer (or (getf slot-opts :lisp-type)
-                                              (progn (warn "~&; No canonical type known for ~a.~a" type slot-name)
-                                                     T)))
-                                (:float 'single-float)
-                                (:double 'double-float)
-                                (:char 'cl:character)
-                                ((:size :int :int64 :uint64 :int32 :uint32 :int8 :uint8) 'integer)
-                                (:bool T)
-                                (T T))))))
+    (let* ((accessor (or (getf slot-opts :accessor) (intern (string slot-name))))
+           (slot-fun (find-symbol (format NIL "~a-~a" type slot-name) (symbol-package type)))
+           (lisp-type (to-lisp-type slot-type slot-opts))
+           (value-class (case lisp-type
+                          ((boolean cffi:foreign-pointer) T)
+                          (T lisp-type))))
       `(progn
          (export '(,accessor))
          (defmethod ,accessor ((wrapper ,class))
@@ -197,7 +213,7 @@
                   (T
                    `(,slot-fun (handle wrapper)))))
          
-         (defmethod (setf ,accessor) ((value ,lisp-type) (wrapper ,class))
+         (defmethod (setf ,accessor) ((value ,value-class) (wrapper ,class))
            ,(cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
                    `(error "Impl"))
                   ((and (listp slot-type) (eql 'fbx:string (first slot-type)))
@@ -235,12 +251,36 @@
 (defmacro define-struct-wrappers (&body structs)
   (let ((structs (loop for (type . rest) in structs
                        collect (destructuring-bind (type &optional (class (intern (string type))) &rest copts) (if (listp type) type (list type))
-                                 (list* type class copts rest)))))
+                                 (list* type class copts rest))))
+        (inv-map (make-hash-table :test 'eql)))
     `(progn
-       ,@(loop for (type class opts) in structs
+       ,@(loop for (type class opts . slot-opts) in structs
+               for slot-names = (cffi:foreign-slot-names `(:struct ,type))
+               for method-names = (loop for slot in slot-names
+                                        for opts = (rest (assoc slot slot-opts :test #'string=))
+                                        collect (or (getf opts :accessor) (intern (string slot))))
+               do (loop for slot in slot-names
+                        for method in method-names
+                        for opts = (rest (assoc slot slot-opts :test #'string=))
+                        unless (getf opts :omit)
+                        do (push (list slot class type opts) (gethash method inv-map)))
                collect `(export '(,class))
                collect `(defclass ,class (,@(getf opts :direct-superclasses) wrapper)
-                          ((handle :initform (cffi:foreign-alloc '(:struct ,type))))))
+                          ((handle :initform (cffi:foreign-alloc '(:struct ,type))))
+                          (:documentation ,(format NIL "Representation of a ~s.~%~{~%See ~s~}" type method-names))))
+       ,@(loop for method being the hash-keys of inv-map using (hash-value classes)
+               for slot = (first (first classes))
+               collect `(progn (defgeneric ,method (wrapper)
+                                 (:documentation ,(format NIL "Access the ~s slot~%~{~%~{For ~s returns a ~s~@[ (~s)~]~}~}~%~{~%See ~a (type)~}" slot
+                                                          (loop for (slot-name class type slot-opts) in classes
+                                                                for slot-type = (cffi:foreign-slot-type type slot-name)
+                                                                for lisp-type = (to-lisp-type slot-type slot-opts)
+                                                                collect (list class (if (eql T lisp-type)
+                                                                                        slot-type lisp-type)
+                                                                              (when (eql lisp-type 'foreign-vector)
+                                                                                (or (getf slot-opts :lisp-type)
+                                                                                    (intern (string (getf slot-opts :foreign-type)))))))
+                                                          (mapcar #'second classes))))))
        ,@(loop for (type class copts . slots) in structs
                collect `(defmethod foreign-type ((wrapper ,class)) '(:struct ,type))
                collect `(define-struct-accessors ,type ,class ,@slots)))))

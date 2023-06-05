@@ -1,4 +1,18 @@
-## AAAAA
+## About cl-fbx
+This is a wrapper library around "ufbx"(https://github.com/ufbx/ufbx), a C library for parsing the FBX 3D model file format. As the library and structures involved are quite large, please refer to the C library for more detailed documentation on the individual structures, functions, and fields.
+
+## How To
+First, load the library, and then parse a file:
+
+:: common lisp
+(org.shirakumo.fraf.fbx:parse #p"my-model.fbx")
+::
+
+Files can be loaded from a file on disk, an octet stream, an octet vector, or a direct memory pointer.
+
+When you are done with the file, you must ``free`` it to clear out any foreign memory resources taken up by it. Other calls may also return fresh instances that must be manually freed as appropriate. For most cases, using ``with-freeing`` should help to ensure data does not get retained more than necessary.
+
+All structures returned by the library are wrapped in ``wrapper`` instances, which are thin instances that give more convenient Lisp-side access to the data. For lists, a ``foreign-vector`` is returned, which can be indexed with the standard sequence functions on implementations supporting the extensible-sequences protocol.
 
 ## Included Sources
 The following source files are included in this repository:
