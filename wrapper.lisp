@@ -273,7 +273,7 @@
                collect `(progn (defgeneric ,method (wrapper)
                                  (:documentation ,(format NIL "Access the ~s slot~%~{~%~{For ~s returns a ~s~@[ (~s)~]~}~}~%~{~%See ~a (type)~}" slot
                                                           (loop for (slot-name class type slot-opts) in classes
-                                                                for slot-type = (cffi:foreign-slot-type type slot-name)
+                                                                for slot-type = (cffi:foreign-slot-type `(:struct ,type) slot-name)
                                                                 for lisp-type = (to-lisp-type slot-type slot-opts)
                                                                 collect (list class (if (eql T lisp-type)
                                                                                         slot-type lisp-type)
@@ -282,7 +282,7 @@
                                                                                     (intern (string (getf slot-opts :foreign-type)))))))
                                                           (delete-duplicates
                                                            (append (loop for (slot-name class type slot-opts) in classes
-                                                                         for slot-type = (cffi:foreign-slot-type type slot-name)
+                                                                         for slot-type = (cffi:foreign-slot-type `(:struct ,type) slot-name)
                                                                          for lisp-type = (to-lisp-type slot-type slot-opts)
                                                                          collect (if (eql T lisp-type) slot-type lisp-type))
                                                                    (mapcar #'second classes))))))))
@@ -682,6 +682,7 @@
     function))
 
 (cffi:defcallback open-file-cb :bool ((user :pointer) (stream :pointer) (path :string) (length :size) (info :pointer))
+  (declare (ignore length))
   (with-ptr-resolve (fun user)
     (funcall fun stream path (fbx:open-file-info-type info)
              (cffi:foreign-slot-pointer info '(:struct fbx:open-file-info) 'fbx:temp-allocator))))

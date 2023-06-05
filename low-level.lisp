@@ -1220,7 +1220,7 @@
   (prop-prefix (:struct string)))
 
 (cffi:defcstruct (texture-file :conc-name texture-file- :class texture-file)
-  (index :uint32)
+  (idx :uint32)
   (filename (:struct string))
   (absolute-filename (:struct string))
   (relative-filename (:struct string))

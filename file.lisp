@@ -28,15 +28,15 @@
 
 (defgeneric %parse (source opts error &key &allow-other-keys))
 
-(defmethod %parse ((source string) opts error &key args)
+(defmethod %parse ((source string) opts error &key)
   (make-instance 'fbx-file :handle (fbx:load-file source opts error)))
 
 (defmethod %parse ((source pathname) opts error &key)
   (make-instance 'fbx-file :handle (fbx:load-file (namestring source) opts error)))
 
-(defmethod %parse ((source vector) opts error &rest args &key static-vector-p)
+(defmethod %parse ((source vector) opts error &rest args &key static-vector)
   (check-type source (vector (unsigned-byte 8)))
-  (if static-vector-p
+  (if static-vector
       (apply #'%parse (static-vectors:static-vector-pointer source) opts error :data-size (length source) args)
       (let ((ptr (cffi:foreign-alloc :uint8 :count (length source) :initial-contents source)))
         (apply #'%parse ptr opts error :data-size (length source) :deallocate T args))))
