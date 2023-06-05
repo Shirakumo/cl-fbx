@@ -12,7 +12,7 @@
    (description :initarg :description :reader description)
    (info :initarg :info :reader info)
    (stack :initarg :stack :reader stack))
-  (:report (lambda (c s) (format s "An FBX error occurred:~%~%[~a]~%~a"
+  (:report (lambda (c s) (format s "An FBX error occurred:~%[~a]~%~a"
                                  (code c) (message c)))))
 
 (defun fbx-error (error)
@@ -20,7 +20,7 @@
                     :message (cffi:with-foreign-objects ((string :char 2048))
                                (fbx:format-error string 2048 error)
                                (cffi:foreign-string-to-lisp string))
-                    :description (fbx:string-data (fbx:error-description error))
+                    :description (getf (fbx:error-description error) 'fbx:data)
                     :info (cffi:foreign-string-to-lisp (cffi:foreign-slot-pointer error '(:struct fbx:error) 'fbx:info)
                                                        :count (fbx:error-info-length error))
                     :stack (loop for i from 0 below (fbx:error-stack-size error)
@@ -43,7 +43,7 @@
 
 (defun fbx-warning (warning)
   (warn 'fbx-warning :code (fbx:warning-type warning)
-                     :description (fbx:string-data (fbx:warning-description warning))))
+                     :description (getf (fbx:warning-description warning) 'fbx:data)))
 
 (define-condition fbx-panic (error)
   ((message :initarg :message :reader message))

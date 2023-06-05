@@ -67,6 +67,11 @@
   (apply #'update wrapper args))
 
 (defgeneric foreign-type (wrapper))
+(defgeneric accessors (wrapper))
+
+(defmethod print-object ((wrapper wrapper) stream)
+  (print-unreadable-object (wrapper stream :type T)
+    (format stream "0x~16,'0X" (cffi:pointer-address (handle wrapper)))))
 
 (defmethod free ((wrapper wrapper))
   (when (handle wrapper)
@@ -78,10 +83,25 @@
   (declare (ignore abort))
   (free wrapper))
 
+(defmethod describe-object ((wrapper wrapper) stream)
+  (format stream "~a~%  [~a]~%~%" wrapper (type-of wrapper))
+  (loop for name in (accessors wrapper)
+        do (format stream "~30s = ~s~%"
+                   name (funcall name wrapper)))
+  wrapper)
+
 (defclass foreign-vector (standard-object sequences:sequence)
   ((handle :initarg :handle :initform NIL :accessor handle)
    (lisp-type :initarg :lisp-type :initform NIL :accessor lisp-type)
    (foreign-type :initarg :foreign-type :initform NIL :accessor foreign-type)))
+
+(defmethod print-object ((vector foreign-vector) stream)
+  (print-unreadable-object (vector stream)
+    (format stream "~s ~a (~d) 0x~16,'0X" 
+            'foreign-vector
+            (lisp-type vector)
+            (length vector)
+            (cffi:pointer-address (handle vector)))))
 
 (defmethod sequences:elt ((vector foreign-vector) index)
   (make-instance (lisp-type vector) :handle (cffi:mem-aref (fbx:list-data (handle vector)) :pointer index)))
@@ -202,7 +222,7 @@
                                                (when (getf slot-opts :lisp-type)
                                                  (intern (string (getf slot-opts :lisp-type)) (symbol-package type)))
                                                :pointer)))
-                  ((and (listp slot-type) (eql 'fbx:string (first slot-type)))
+                  ((and (listp slot-type) (eql 'fbx:string (second slot-type)))
                    `(fbx:string-data (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)))
                   ((and (listp slot-type) (eql :struct (first slot-type)))
                    `(make-instance ',lisp-type :handle (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)))
@@ -216,7 +236,7 @@
          (defmethod (setf ,accessor) ((value ,value-class) (wrapper ,class))
            ,(cond ((and (listp slot-type) (eql 'fbx:list (second slot-type)))
                    `(error "Impl"))
-                  ((and (listp slot-type) (eql 'fbx:string (first slot-type)))
+                  ((and (listp slot-type) (eql 'fbx:string (second slot-type)))
                    `(setf (fbx:string-data (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)) value
                           (fbx:string-length (cffi:foreign-slot-pointer (handle wrapper) '(:struct ,type) ',slot-name)) (length value)))
                   ((and (listp slot-type) (eql :struct (first slot-type)))
@@ -246,6 +266,7 @@
                for slot-type = (cffi:foreign-slot-type `(:struct ,type) slot-name)
                for slot-opts = (rest (assoc slot-name slot-options :test #'string=))
                unless (getf slot-opts :omit)
+               do (print (list slot-name slot-type))
                collect (compile-slot-accessor type class slot-name slot-type slot-opts)))))
 
 (defmacro define-struct-wrappers (&body structs)
@@ -264,10 +285,12 @@
                         for opts = (rest (assoc slot slot-opts :test #'string=))
                         unless (getf opts :omit)
                         do (push (list slot class type opts) (gethash method inv-map)))
-               collect `(export '(,class))
-               collect `(defclass ,class (,@(getf opts :direct-superclasses) wrapper)
-                          ((handle :initform (cffi:foreign-alloc '(:struct ,type))))
-                          (:documentation ,(format NIL "Representation of a ~s.~%~{~%See ~s~}" type method-names))))
+               collect `(progn (export '(,class))
+                               (defclass ,class (,@(getf opts :direct-superclasses) wrapper)
+                                 ((handle :initform (cffi:foreign-alloc '(:struct ,type))))
+                                 (:documentation ,(format NIL "Representation of a ~s.~%~{~%See ~s~}" type method-names)))
+                               (defmethod foreign-type ((wrapper ,class)) '(:struct ,type))
+                               (defmethod accessors ((wrapper ,class)) '(,@method-names))))
        ,@(loop for method being the hash-keys of inv-map using (hash-value classes)
                for slot = (first (first classes))
                collect `(progn (defgeneric ,method (wrapper)
@@ -287,7 +310,6 @@
                                                                          collect (if (eql T lisp-type) slot-type lisp-type))
                                                                    (mapcar #'second classes))))))))
        ,@(loop for (type class copts . slots) in structs
-               collect `(defmethod foreign-type ((wrapper ,class)) '(:struct ,type))
                collect `(define-struct-accessors ,type ,class ,@slots)))))
 
 (define-struct-wrappers

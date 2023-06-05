@@ -14,6 +14,8 @@ When you are done with the file, you must ``free`` it to clear out any foreign m
 
 All structures returned by the library are wrapped in ``wrapper`` instances, which are thin instances that give more convenient Lisp-side access to the data. For lists, a ``foreign-vector`` is returned, which can be indexed with the standard sequence functions on implementations supporting the extensible-sequences protocol.
 
+You can at any time also invoke ``describe`` on an instance to get a listing of all the slots and their contents. This should make it much easier to traverse the data.
+
 ## Included Sources
 The following source files are included in this repository:
 

@@ -30,7 +30,7 @@
   (init)
   (cffi:with-foreign-objects ((error '(:struct fbx:error)))
     (let* ((opts (apply #'make-instance 'load-opts args))
-           (result (apply #'%parse source opts error args)))
+           (result (apply #'%parse source (handle opts) error args)))
       (unwind-protect (check-error error)
         (free opts))
       result)))
@@ -38,10 +38,10 @@
 (defgeneric %parse (source opts error &key &allow-other-keys))
 
 (defmethod %parse ((source string) opts error &key)
-  (make-instance 'fbx-file :handle (fbx:load-file source opts error)))
+  (make-instance 'fbx-file :source source :handle (fbx:load-file source opts error)))
 
 (defmethod %parse ((source pathname) opts error &key)
-  (make-instance 'fbx-file :handle (fbx:load-file (namestring source) opts error)))
+  (make-instance 'fbx-file :source source :handle (fbx:load-file (namestring source) opts error)))
 
 (defmethod %parse ((source vector) opts error &rest args &key static-vector)
   (check-type source (vector (unsigned-byte 8)))
@@ -62,7 +62,8 @@
 (defmethod %parse (source opts error &key data-size deallocate)
   (etypecase source
     (cffi:foreign-pointer
-     (make-instance 'fbx-file-pointer :handle (fbx:load-memory source data-size opts error)
+     (make-instance 'fbx-file-pointer :source source
+                                      :handle (fbx:load-memory source data-size opts error)
                                       :deallocate-p deallocate))))
 
 (defclass fbx-file-stream (fbx-file)
@@ -85,7 +86,7 @@
     (setf (fbx:stream-skip-fn stream) (cffi:callback stream-skip-cb))
     (setf (fbx:stream-close-fn stream) (cffi:callback stream-close-cb))
     (setf (fbx:stream-user stream) stream)
-    (make-instance 'fbx-file-stream :handle (fbx:load-stream stream opts error) :stream source :stream-struct stream)))
+    (make-instance 'fbx-file-stream :source source :handle (fbx:load-stream stream opts error) :stream source :stream-struct stream)))
 
 (cffi:defcallback stream-read-cb :size ((user :pointer) (data :pointer) (size :size))
   (with-ptr-resolve (file user)
