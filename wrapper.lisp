@@ -275,7 +275,6 @@
                for slot-type = (cffi:foreign-slot-type `(:struct ,type) slot-name)
                for slot-opts = (rest (assoc slot-name slot-options :test #'string=))
                unless (getf slot-opts :omit)
-               do (print (list slot-name slot-type))
                collect (compile-slot-accessor type class slot-name slot-type slot-opts)))))
 
 (defmacro define-struct-wrappers (&body structs)
