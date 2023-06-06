@@ -44,16 +44,13 @@
   wrapper)
 
 (defmacro with-freeing (bindings &body body)
-  (let ((gensyms (loop for (name) in bindings collect (gensym (string name)))))
-    `(let* ,(loop for gens in gensyms
-                 for binding in bindings
-                 collect `(,gens ,(second binding)))
-       (unwind-protect (let ,(loop for gens in gensyms
-                                   for (name) in bindings
-                                   collect `(,gens ,name))
-                         ,@body)
-         ,@(loop for gens in (reverse gensyms)
-                 collect `(free ,gens))))))
+  `(let* ,bindings
+     (unwind-protect (let ,(loop for (name) in bindings
+                                 collect `(,name ,name))
+                       (declare (ignorable ,@(butlast (mapcar #'car bindings))))
+                       ,@body)
+       ,@(loop for (name) in (reverse bindings)
+               collect `(free ,name)))))
 
 (defclass wrapper ()
   ((handle :initarg :handle :initform NIL :accessor handle)))
