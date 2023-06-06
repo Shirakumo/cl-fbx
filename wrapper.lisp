@@ -45,7 +45,7 @@
 
 (defmacro with-freeing (bindings &body body)
   (let ((gensyms (loop for (name) in bindings collect (gensym (string name)))))
-    `(let ,(loop for gens in gensyms
+    `(let* ,(loop for gens in gensyms
                  for binding in bindings
                  collect `(,gens ,(second binding)))
        (unwind-protect (let ,(loop for gens in gensyms

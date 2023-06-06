@@ -245,7 +245,7 @@ You may also instead use REINITIALIZE-INSTANCE to achieve the same.
 See WRAPPER (type)")
 
   (function with-freeing
-    "LET with additional freeing semantics.
+    "LET* with additional freeing semantics.
 
 Upon exit of the BODY for any reason, FREE is called on each value of
 each binding in reverse order of the value forms.
