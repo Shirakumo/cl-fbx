@@ -87,7 +87,7 @@
                    name (funcall name wrapper)))
   wrapper)
 
-(defclass foreign-vector (standard-object sequences:sequence)
+(defclass foreign-vector (sequences:sequence standard-object)
   ((handle :initarg :handle :initform NIL :accessor handle)
    (lisp-type :initarg :lisp-type :initform NIL :accessor lisp-type)
    (foreign-type :initarg :foreign-type :initform NIL :accessor foreign-type)))
