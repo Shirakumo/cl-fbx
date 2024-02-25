@@ -1,10 +1,13 @@
 CC ?= gcc
 OUT := libfbx
 SUFFIX := so
-CFLAGS := -O3 -ftree-vectorize -msse -mfpmath=sse -fPIC -g -D UFBX_REAL_IS_FLOAT
+CFLAGS := -O3 -ftree-vectorize -fPIC -g -D UFBX_REAL_IS_FLOAT
+CFLAGS_SSE := -msse -mfpmath=sse
+CFLAGS_M1 := -march=armv8.5-a -mfpu=neon
 LDFLAGS := -l m
 
 ifeq ($(OS),Windows_NT)
+    CFLAGS += $(CFLAGS_SSE)
     OUT := $(OUT)-win
     SUFFIX := dll
     ifeq ($(PROCESSOR_ARCHITEW6432),AMD64)
@@ -28,14 +31,17 @@ else
 	SUFFIX = dylib
     endif
     PROC_P := $(shell $(CC) -dumpmachine)
-    ifeq ($(filter, %x86_64,$(PROC)),)
+    ifneq ($(filter %x86_64,$(PROC_P)),)
         OUT := $(OUT)-amd64
+        CFLAGS += $(CFLAGS_SSE)
     endif
-    ifneq ($(filter %86,$(PROC)),)
+    ifneq ($(filter %86,$(PROC_P)),)
         OUT := $(OUT)-i686
+        CFLAGS += $(CFLAGS_SSE)
     endif
-    ifneq ($(filter arm%,$(PROC)),)
+    ifneq ($(filter arm%,$(PROC_P)),)
         OUT := $(OUT)-arm
+        CFLAGS += $(CFLAGS_M1)
     endif
 endif
 
