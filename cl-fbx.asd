@@ -4,9 +4,9 @@
   :author "Yukari Hafner <shinmera@tymoon.eu>"
   :maintainer "Yukari Hafner <shinmera@tymoon.eu>"
   :description "Bindings to ufbx, a simple and free FBX model decoding library"
-  :homepage "https://Shirakumo.github.io/cl-fbx/"
-  :bug-tracker "https://github.com/Shirakumo/cl-fbx/issues"
-  :source-control (:git "https://github.com/Shirakumo/cl-fbx.git")
+  :homepage "https://shirakumo.org/docs/cl-fbx/"
+  :bug-tracker "https://shirakumo.org/project/cl-fbx/issues"
+  :source-control (:git "https://shirakumo.org/project/cl-fbx.git")
   :serial T
   :components ((:file "package")
                (:file "low-level")
